@@ -72,10 +72,13 @@ OmniVision/
 ### 5. 界面展示 / Screenshots
 #### 志愿者端 App
 <p align="center">
-  <img src="docs/images/mobile-01.png" alt="Volunteer App Map" width="23%" />
-  <img src="docs/images/mobile-02.png" alt="Volunteer App Dispatch" width="23%" />
-  <img src="docs/images/mobile-03.png" alt="Volunteer App Community" width="23%" />
-  <img src="docs/images/mobile-call-showcase.png" alt="Volunteer App Video Call" width="23%" />
+  <img src="docs/images/mobile-01.png" alt="Volunteer App Map" width="31%" />
+  <img src="docs/images/mobile-02.png" alt="Volunteer App Dispatch" width="31%" />
+  <img src="docs/images/mobile-03.png" alt="Volunteer App Community" width="31%" />
+</p>
+
+<p align="center">
+  <img src="docs/images/mobile-call-showcase.png" alt="Volunteer App Video Call" width="72%" />
 </p>
 
 - `mobile-01`：地图与任务主界面
@@ -199,10 +202,13 @@ OmniVision/
 ### 5. Screenshots
 #### Volunteer App
 <p align="center">
-  <img src="docs/images/mobile-01.png" alt="Volunteer App Map EN" width="23%" />
-  <img src="docs/images/mobile-02.png" alt="Volunteer App Dispatch EN" width="23%" />
-  <img src="docs/images/mobile-03.png" alt="Volunteer App Community EN" width="23%" />
-  <img src="docs/images/mobile-call-showcase.png" alt="Volunteer App Video Call EN" width="23%" />
+  <img src="docs/images/mobile-01.png" alt="Volunteer App Map EN" width="31%" />
+  <img src="docs/images/mobile-02.png" alt="Volunteer App Dispatch EN" width="31%" />
+  <img src="docs/images/mobile-03.png" alt="Volunteer App Community EN" width="31%" />
+</p>
+
+<p align="center">
+  <img src="docs/images/mobile-call-showcase.png" alt="Volunteer App Video Call EN" width="72%" />
 </p>
 
 - `mobile-01`: map and task workflow
