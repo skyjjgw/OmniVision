@@ -69,26 +69,30 @@ OmniVision/
 - 项目交接说明：`docs/PROJECT_HANDOVER.md`
 - API 参考：`docs/API_REFERENCE.md`
 
-### 5. 功能界面截图
+### 5. 界面展示 / Screenshots
 #### 志愿者端 App
-移动端示例界面 1：地图与任务主界面  
-![Volunteer App - Map](docs/images/mobile-01.png)
+<p align="center">
+  <img src="docs/images/mobile-01.png" alt="Volunteer App Map" width="23%" />
+  <img src="docs/images/mobile-02.png" alt="Volunteer App Dispatch" width="23%" />
+  <img src="docs/images/mobile-03.png" alt="Volunteer App Community" width="23%" />
+  <img src="docs/images/mobile-call-showcase.png" alt="Volunteer App Video Call" width="23%" />
+</p>
 
-移动端示例界面 2：语音/通话协同场景  
-![Volunteer App - Call](docs/images/mobile-02.png)
-
-移动端示例界面 3：社区与管理功能场景  
-![Volunteer App - Community](docs/images/mobile-03.png)
+- `mobile-01`：地图与任务主界面
+- `mobile-02`：接单与协作流程界面
+- `mobile-03`：社区与管理功能界面
+- `mobile-call-showcase`：视频通话与人工协助纠错展示
 
 #### 云端管理后台
-后台示例界面 1：实时监控或地图总览  
-![Cloud Dashboard - Monitor](docs/images/cloud-01.png)
+<p align="center">
+  <img src="docs/images/cloud-01.png" alt="Cloud Dashboard Monitor" width="32%" />
+  <img src="docs/images/cloud-02.png" alt="Cloud Dashboard Admin" width="32%" />
+  <img src="docs/images/cloud-03.png" alt="Cloud Dashboard Audit" width="32%" />
+</p>
 
-后台示例界面 2：数据管理与配置界面  
-![Cloud Dashboard - Admin](docs/images/cloud-02.png)
-
-后台示例界面 3：审核与业务管理界面  
-![Cloud Dashboard - Audit](docs/images/cloud-03.png)
+- `cloud-01`：实时监控或地图总览页面
+- `cloud-02`：后台管理与数据配置页面
+- `cloud-03`：审核与业务处理页面
 
 ### 6. 快速接手路径
 1. 阅读 `docs/PROJECT_HANDOVER.md` 了解整体交接信息。
@@ -194,24 +198,28 @@ OmniVision/
 
 ### 5. Screenshots
 #### Volunteer App
-Volunteer app example: map and task workflow  
-![Volunteer App - Map EN](docs/images/mobile-01.png)
+<p align="center">
+  <img src="docs/images/mobile-01.png" alt="Volunteer App Map EN" width="23%" />
+  <img src="docs/images/mobile-02.png" alt="Volunteer App Dispatch EN" width="23%" />
+  <img src="docs/images/mobile-03.png" alt="Volunteer App Community EN" width="23%" />
+  <img src="docs/images/mobile-call-showcase.png" alt="Volunteer App Video Call EN" width="23%" />
+</p>
 
-Volunteer app example: call and collaboration workflow  
-![Volunteer App - Call EN](docs/images/mobile-02.png)
-
-Volunteer app example: community and management workflow  
-![Volunteer App - Community EN](docs/images/mobile-03.png)
+- `mobile-01`: map and task workflow
+- `mobile-02`: dispatch and collaboration workflow
+- `mobile-03`: community and management workflow
+- `mobile-call-showcase`: video call and human-assisted correction showcase
 
 #### Cloud Dashboard
-Cloud dashboard example: monitoring and map overview  
-![Cloud Dashboard - Monitor EN](docs/images/cloud-01.png)
+<p align="center">
+  <img src="docs/images/cloud-01.png" alt="Cloud Dashboard Monitor EN" width="32%" />
+  <img src="docs/images/cloud-02.png" alt="Cloud Dashboard Admin EN" width="32%" />
+  <img src="docs/images/cloud-03.png" alt="Cloud Dashboard Audit EN" width="32%" />
+</p>
 
-Cloud dashboard example: admin and data management  
-![Cloud Dashboard - Admin EN](docs/images/cloud-02.png)
-
-Cloud dashboard example: audit and business workflow  
-![Cloud Dashboard - Audit EN](docs/images/cloud-03.png)
+- `cloud-01`: real-time monitoring or map overview
+- `cloud-02`: admin and data configuration page
+- `cloud-03`: audit and business workflow page
 
 ### 6. Getting Started
 1. Read `docs/PROJECT_HANDOVER.md` for the project handover summary.
