@@ -1,0 +1,81 @@
+name: Build iOS App (Unsigned)
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  build_ios_unsigned:
+    name: Build Unsigned IPA
+    runs-on: macos-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      - name: Install Dependencies
+        run: flutter pub get
+
+      # 手动生成 iOS 配置，确保 Generated.xcconfig 存在
+      - name: Generate iOS Config
+        run: |
+          flutter create . --platforms ios
+          flutter precache --ios
+
+      # 显式安装 Pods，确保 Pods 项目存在
+      - name: Install Pods
+        run: |
+          cd ios
+          pod install --repo-update
+
+      # 运行 Python 脚本，强制修改 Runner 和 Pods 的 pbxproj 文件
+      # 禁用签名、Bitcode、沙盒，并设置部署目标为 12.0
+      - name: Patch Project Files (Disable Signing)
+        run: |
+          python3 ios/disable_signing.py
+
+      # 使用 xcodebuild 直接构建 Workspace
+      # 绕过 Flutter 的构建命令，完全手动控制参数
+      - name: Build via xcodebuild (Manual)
+        run: |
+          xcodebuild -workspace ios/Runner.xcworkspace \
+            -scheme Runner \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build/ios_integ \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGN_STYLE=Manual \
+            PROVISIONING_PROFILE_SPECIFIER="" \
+            DEVELOPMENT_TEAM="" \
+            ENABLE_BITCODE=NO \
+            ENABLE_USER_SCRIPT_SANDBOXING=NO \
+            IPHONEOS_DEPLOYMENT_TARGET=12.0 \
+            clean build
+
+      # 手动打包
+      - name: Package IPA
+        run: |
+          mkdir -p build/ios/iphoneos/Payload
+          # xcodebuild 输出路径在 build/ios_integ/Build/Products/Release-iphoneos/
+          cp -r build/ios_integ/Build/Products/Release-iphoneos/Runner.app build/ios/iphoneos/Payload/
+          cd build/ios/iphoneos
+          zip -r release_unsigned.ipa Payload
+          echo "IPA created at build/ios/iphoneos/release_unsigned.ipa"
+
+      - name: Upload Unsigned IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: unsigned-ipa
+          path: build/ios/iphoneos/release_unsigned.ipa
+          retention-days: 5

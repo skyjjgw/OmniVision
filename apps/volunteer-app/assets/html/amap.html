@@ -1,0 +1,358 @@
+<!doctype html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="initial-scale=1.0, user-scalable=no, width=device-width">
+    <title>志愿者地图</title>
+    <style>
+        html, body, #container {
+            width: 100%;
+            height: 100%;
+            margin: 0;
+            font-family: "Microsoft YaHei", sans-serif;
+        }
+        .amap-call {
+            display: none !important;
+        }
+    </style>
+    <script type="text/javascript">
+        window._AMapSecurityConfig = {
+            securityJsCode: '4f72d4e8fe05bbbcb2b685a0a39b9da6',
+        }
+    </script>
+    <script src="https://webapi.amap.com/maps?v=1.4.15&key=539153aae5fa1421a5d195af77e65e17&plugin=AMap.Walking,AMap.Driving,AMap.Geocoder,AMap.PlaceSearch,AMap.AutoComplete"></script>
+</head>
+<body>
+<div id="container"></div>
+
+<script type="text/javascript">
+    var map;
+    var userMarker = null;
+    var obstacleMarkers = [];
+    var placeSearch;
+
+    // Search POI
+    window.searchPoi = function(keyword) {
+        if (!placeSearch) {
+            placeSearch = new AMap.PlaceSearch({
+                city: '全国', // Default city
+                pageSize: 10
+            });
+        }
+        
+        placeSearch.search(keyword, function(status, result) {
+            if (status === 'complete' && result.info === 'OK') {
+                var pois = result.poiList.pois;
+                var data = [];
+                for(var i=0; i<pois.length; i++) {
+                    var p = pois[i];
+                    if (p.location) {
+                        data.push({
+                            id: p.id,
+                            name: p.name,
+                            address: p.address,
+                            lat: p.location.lat,
+                            lon: p.location.lng,
+                            type: 'poi'
+                        });
+                    }
+                }
+                
+                if (window.Flutter) {
+                    window.Flutter.postMessage(JSON.stringify({
+                        type: 'POI_SEARCH_RESULT',
+                        data: data
+                    }));
+                }
+            } else {
+                // No result or error
+                if (window.Flutter) {
+                    window.Flutter.postMessage(JSON.stringify({
+                        type: 'POI_SEARCH_RESULT',
+                        data: []
+                    }));
+                }
+            }
+        });
+    };
+
+    // 获取地图中心点坐标 (供 Flutter 调用)
+    window.getMapCenter = function() {
+        var center = map.getCenter();
+        return JSON.stringify({
+            lat: center.getLat(),
+            lon: center.getLng()
+        });
+    };
+
+    // 接收 Flutter 消息
+    // 放在最前面确保定义
+    window.handleFlutterMessage = function(jsonStr) {
+        try {
+            // console.log("Received Flutter message: " + jsonStr);
+            var msg = JSON.parse(jsonStr);
+            if (msg.type === 'UPDATE_POSITION') {
+                    updatePosition(msg.lat, msg.lon, msg.forceCenter, msg.angle);
+                } else if (msg.type === 'SET_OBSTACLES') {
+                    clearObstacles();
+                    var list = msg.data;
+                    if (list && list.length > 0) {
+                        for (var i = 0; i < list.length; i++) {
+                            var item = list[i];
+                            addObstacleMarker(item.id, item.lat, item.lon, item.status, item.imageUrl, item.imageCount);
+                        }
+                    }
+                } else if (msg.type === 'ADD_MARKER') {
+                    addObstacleMarker(msg.id, msg.lat, msg.lon, msg.status, msg.imageUrl, msg.imageCount);
+                } else if (msg.type === 'SEARCH_POI') {
+                    window.searchPoi(msg.keyword);
+                }
+        } catch(e) {
+            console.error("Handle message error: " + e);
+        }
+    };
+
+    // var map; // Already declared above
+    // var userMarker = null; // Already declared above
+    // var obstacleMarkers = []; // Already declared above
+
+    try {
+        map = new AMap.Map("container", {
+            resizeEnable: true,
+            zoom: 16,
+            isHotspot: true // 开启热点功能
+        });
+        console.log("Map initialized successfully");
+
+        // 监听热点点击事件
+        map.on('hotspotclick', function(result) {
+            var props = result.id ? {id: result.id, name: result.name} : {name: result.name};
+            console.log("Hotspot clicked: " + JSON.stringify(props));
+            
+            if (window.FlutterChannel) {
+                window.FlutterChannel.postMessage(JSON.stringify({
+                    type: 'POI_CLICK',
+                    name: result.name,
+                    id: result.id,
+                    lat: result.lnglat.lat,
+                    lon: result.lnglat.lng
+                }));
+            }
+        });
+
+    } catch (e) {
+        console.error("Map initialization failed: " + e);
+        document.getElementById("container").innerHTML = "<div style='padding:20px;color:red'>地图加载失败，请检查网络</div>";
+    }
+
+    // 定位图标 (带旋转)
+    function getPlaneIconContent(angle) {
+        var rot = angle || 0;
+        return '<div style="width:32px; height:32px; transform: rotate(' + rot + 'deg); transition: transform 0.3s ease;">' +
+            '<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">' +
+            '<path d="M12 2L2 22L12 18L22 22L12 2Z" fill="#2196F3" stroke="white" stroke-width="2" stroke-linejoin="round"/>' +
+            '</svg></div>';
+    }
+
+    // 障碍物图标 (图片气泡样式)
+    function createObstacleContent(type, imageUrl, imageCount) {
+        // type: 'shop' | 'obstacle' | 'candidate'
+        var size = 60; // 气泡大小
+        var borderRadius = 12; // 圆角
+        
+        // 如果没有图片，使用默认颜色和图标
+        var hasImage = (imageUrl && imageUrl.length > 0);
+        
+        // 容器样式
+        var containerStyle = 'width:' + size + 'px; height:' + size + 'px; ' +
+                             'background-color: #fff; ' +
+                             'border-radius: ' + borderRadius + 'px; ' +
+                             'box-shadow: 0 2px 6px rgba(0,0,0,0.3); ' +
+                             'position: relative; ' +
+                             'display: flex; justify-content: center; align-items: center; ' +
+                             'border: 2px solid white;';
+
+        // 内部内容
+        var innerContent = '';
+        if (hasImage) {
+            innerContent = '<img src="' + imageUrl + '" style="width:100%; height:100%; border-radius:' + (borderRadius-2) + 'px; object-fit: cover;">';
+            
+            // 如果有多张图，显示数量角标 (左下角)
+            if (imageCount && imageCount > 0) {
+                 innerContent += '<div style="position: absolute; left: 4px; bottom: 4px; color: white; font-size: 10px; font-weight: bold; text-shadow: 0 1px 2px rgba(0,0,0,0.8);">' + imageCount + '</div>';
+            }
+        } else {
+             // 无图显示图标
+             var iconColor = (type === 'shop') ? '#2196F3' : '#F44336';
+             var iconSvg = '';
+             if (type === 'shop') {
+                 iconSvg = '<path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z" fill="' + iconColor + '"/>' +
+                           '<rect x="9" y="6" width="6" height="6" fill="white"/>';
+             } else if (type === 'dispute') {
+                 // 争议状态 (Warning Triangle)
+                 iconColor = '#FF9800'; // Orange
+                 iconSvg = '<path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z" fill="' + iconColor + '"/>' + 
+                           '<text x="12" y="17" font-size="8" text-anchor="middle" fill="white">?</text>';
+             } else {
+                 // Obstacle (Red Pin)
+                 iconSvg = '<path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z" fill="' + iconColor + '"/>' +
+                           '<circle cx="12" cy="9" r="2.5" fill="white"/>';
+             }
+             
+             innerContent = '<div style="width:32px; height:32px;">' +
+                            '<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">' +
+                            iconSvg +
+                            '</svg></div>';
+        }
+
+        // 底部小三角 (利用 border)
+        var arrowStyle = 'position: absolute; bottom: -8px; left: 50%; margin-left: -8px; ' +
+                         'width: 0; height: 0; ' +
+                         'border-left: 8px solid transparent; ' +
+                         'border-right: 8px solid transparent; ' +
+                         'border-top: 8px solid white;';
+                         
+        // 加上阴影的三角（稍微复杂点，用 drop-shadow 或者伪元素，这里简单处理，直接用一个旋转的div可能更好控制阴影）
+        // 重新实现三角：用一个旋转45度的正方形，背景白，放在最底层
+        var arrowBoxStyle = 'position: absolute; bottom: -5px; left: 50%; margin-left: -6px; ' +
+                            'width: 12px; height: 12px; background: white; ' +
+                            'transform: rotate(45deg); ' +
+                            'box-shadow: 2px 2px 2px rgba(0,0,0,0.1); ' +
+                            'z-index: -1;';
+
+
+        return '<div style="' + containerStyle + '">' +
+                   innerContent +
+                   '<div style="' + arrowBoxStyle + '"></div>' +
+               '</div>';
+    }
+
+    // 更新用户位置
+    function updatePosition(lat, lon, forceCenter, angle) {
+        // 使用高德地图内置转换 (WGS84 -> GCJ02)
+        AMap.convertFrom([parseFloat(lon), parseFloat(lat)], 'gps', function (status, result) {
+            if (result.info === 'ok') {
+                var newLngLat = result.locations[0];
+                
+                if (!userMarker) {
+                     userMarker = new AMap.Marker({
+                        map: map,
+                        position: newLngLat,
+                        content: getPlaneIconContent(angle),
+                        offset: new AMap.Pixel(-16, -16),
+                    });
+                    map.setCenter(newLngLat);
+                } else {
+                    userMarker.setPosition(newLngLat);
+                    userMarker.setContent(getPlaneIconContent(angle));
+                    // 如果强制定位或首次，则移动中心
+                    if (forceCenter) {
+                        map.setZoomAndCenter(19, newLngLat); 
+                    }
+                }
+            } else {
+                console.error("高德坐标转换失败:", result);
+            }
+        });
+    }
+
+    // 添加障碍物标记
+    function addObstacleMarker(id, lat, lon, type, imageUrl, imageCount) {
+        var marker = new AMap.Marker({
+            map: map,
+            position: new AMap.LngLat(lon, lat),
+            content: createObstacleContent(type, imageUrl, imageCount),
+            offset: new AMap.Pixel(-30, -70), // 调整偏移，使其尖角指向坐标点。Size 60x60, 尖角在下。
+            // 容器高60，宽60。中心点在 30, 30。
+            // 我们希望尖角(底部中心)对准 lat/lon。
+            // 底部中心坐标是 (30, 60+三角高度)。
+            // 所以 offset 应该是 (-30, -68) 左右。
+            extData: {id: id},
+            bubble: false // 阻止点击事件冒泡
+        });
+        
+        // 点击标记触发事件
+        marker.on('click', function() {
+            if (window.Flutter) {
+                window.Flutter.postMessage(JSON.stringify({
+                    type: 'MARKER_CLICK',
+                    id: id
+                }));
+            }
+        });
+
+        // 处理 Marker 的触摸事件，防止触发地图的长按
+        marker.on('touchstart', function(e) {
+             // 标记正在触摸 Marker
+             isTouchingMarker = true;
+             
+             // 一旦触摸 Marker，立即清除地图的长按计时
+             if (typeof mapLongPressTimer !== 'undefined') {
+                 clearTimeout(mapLongPressTimer);
+             }
+             
+             // 阻止事件冒泡到地图 (如果 AMap 支持)
+             if (e.event && e.event.stopPropagation) {
+                 e.event.stopPropagation();
+             }
+             
+             // 也可以在这里实现 Marker 的长按逻辑（如果需要区分点击和长按）
+             // 目前点击和长按都触发删除，所以 click 够用了。
+             // 但如果用户按住不放，click 不会触发（直到松开）。
+             // 为了体验更好，我们可以让长按也触发删除。
+             var markerLongPressTimer = setTimeout(function() {
+                  if (window.Flutter) {
+                     window.Flutter.postMessage(JSON.stringify({
+                         type: 'MARKER_CLICK',
+                         id: id
+                     }));
+                 }
+             }, 800);
+             
+             var clearMarkerTimer = function() {
+                 clearTimeout(markerLongPressTimer);
+                 // 稍微延迟重置标志位，防止 touchend 后立即触发 Map 的 touchstart (如果顺序诡异)
+                 setTimeout(function() { isTouchingMarker = false; }, 100);
+             };
+
+             marker.on('touchend', clearMarkerTimer);
+             marker.on('touchmove', function() { clearTimeout(markerLongPressTimer); });
+             // 监听 touchcancel 以防万一
+             marker.on('touchcancel', clearMarkerTimer);
+        });
+
+        obstacleMarkers.push(marker);
+        
+        // 添加圆圈
+        var circle = new AMap.Circle({
+            map: map,
+            center: new AMap.LngLat(lon, lat),
+            radius: 5, // 5米半径
+            strokeColor: "#F33",
+            strokeOpacity: 1,
+            strokeWeight: 1,
+            fillColor: "#ee2200",
+            fillOpacity: 0.35
+        });
+        obstacleMarkers.push(circle); // 将圆圈也加入数组，方便清除
+    }
+
+    // 清除所有障碍物
+    function clearObstacles() {
+        if (obstacleMarkers.length > 0) {
+            map.remove(obstacleMarkers);
+            obstacleMarkers = [];
+        }
+        // map.clearMap(); // 不再清除整个地图，避免闪烁和移除用户定位
+    }
+
+    var isTouchingMarker = false; // 标记是否正在触摸 Marker
+
+    // 接收 Flutter 消息
+    // Flutter Webview 注入 JS 调用此函数
+    /* Moved to top */
+
+</script>
+</body>
+</html>
