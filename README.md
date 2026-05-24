@@ -74,7 +74,7 @@ OmniVision/
 移动端示例界面 1：地图与任务主界面  
 ![Volunteer App - Map](docs/images/mobile-01.png)
 
-移动端示例界面 2：语音/通话协同场景  
+移动端示例界面 2：地图标注协同场景  
 ![Volunteer App - Call](docs/images/mobile-02.png)
 
 移动端示例界面 3：社区与管理功能场景  
