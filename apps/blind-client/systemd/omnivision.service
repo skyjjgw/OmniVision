@@ -1,0 +1,24 @@
+[Unit]
+Description=OmniVision Edge AI & WebRTC Streaming Service
+# 强制要求系统在网络服务完全准备好之后，才尝试启动这个进程
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+# 建议用树莓派默认用户 pi 运行，防止遇到权限问题
+User=pi
+
+# 设定你存放代码和脚本的工作目录
+WorkingDirectory=/home/pi/OmniVision
+
+# 核心命令：调用刚才写的那个 shell 脚本
+ExecStart=/bin/bash /home/pi/OmniVision/start_omnivision.sh
+
+# 崩溃自动重启机制：如果程序意外挂掉，等 5 秒钟系统会自动把它拉起来
+Restart=always
+RestartSec=5
+
+[Install]
+# 开机随多用户终端模式自动启动
+WantedBy=multi-user.target

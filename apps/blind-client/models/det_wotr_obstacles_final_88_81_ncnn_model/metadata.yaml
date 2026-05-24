@@ -1,0 +1,21 @@
+description: Ultralytics det_wotr_obstacles_final_88_81 model trained on /root/autodl-tmp/wotr_yolo/data.yaml
+author: Ultralytics
+date: '2026-03-29T00:30:55.758099'
+version: 8.3.235
+license: AGPL-3.0 License (https://ultralytics.com/license)
+docs: https://docs.ultralytics.com
+stride: 32
+task: detect
+batch: 1
+imgsz:
+- 480
+- 480
+names:
+  0: vehicle
+  1: person
+  2: pole_tree
+  3: obstacle
+args:
+  batch: 1
+  half: true
+channels: 3

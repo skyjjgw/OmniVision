@@ -1,0 +1,532 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>视桥智导 (VisionBridge) - 管理系统登录</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Soft dynamic background - improved for glassmorphism */
+        body, html { 
+            margin: 0;
+            padding: 0;
+            height: 100%;
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            background: linear-gradient(135deg, #dbe6f6 0%, #c5d9ed 100%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+            /* 基础主题变量 */
+            --bg-color: #dbe6f6;
+            --card-bg: rgba(255, 255, 255, 0.35);
+            --card-border: rgba(255, 255, 255, 0.5);
+            --text-primary: #1e3a8a;
+            --text-secondary: #475569;
+            --input-bg: rgba(255, 255, 255, 0.6);
+            --input-border: rgba(255, 255, 255, 0.8);
+            --btn-bg: #2b6cb0; /* 回归原版更沉稳的主题蓝 */
+            --btn-hover: #1e4e8c; /* 更深的悬停蓝 */
+            --btn-text: #ffffff;
+            --btn-shadow: rgba(43, 108, 176, 0.3); /* 对应的阴影颜色 */
+            --left-bg: rgba(30, 58, 138, 0.4); /* 半透明左侧 */
+            --left-text: #ffffff;
+            --shadow-color: rgba(30, 58, 138, 0.15);
+        }
+
+        /* 暗黑模式变量支持 */
+        @media (prefers-color-scheme: dark) {
+            body, html {
+                background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+                --bg-color: #0f172a;
+                --card-bg: rgba(30, 41, 59, 0.45);
+                --card-border: rgba(255, 255, 255, 0.1);
+                --text-primary: #f8fafc;
+                --text-secondary: #94a3b8;
+                --input-bg: rgba(15, 23, 42, 0.6);
+                --input-border: rgba(255, 255, 255, 0.05);
+                --btn-bg: #2b6cb0;
+                --btn-hover: #3182ce;
+                --btn-text: #ffffff;
+                --btn-shadow: rgba(0, 0, 0, 0.4);
+                --left-bg: rgba(15, 23, 42, 0.6);
+                --left-text: #f8fafc;
+                --shadow-color: rgba(0, 0, 0, 0.4);
+            }
+            .wave {
+                background: rgba(255, 255, 255, 0.05) !important;
+            }
+            .wave:nth-child(2) {
+                background: rgba(59, 130, 246, 0.05) !important;
+            }
+        }
+
+        /* 柔和动态波浪背景 */
+        .wave-bg {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            top: 0;
+            left: 0;
+            z-index: 0;
+            overflow: hidden;
+        }
+
+        .wave {
+            position: absolute;
+            width: 200%;
+            height: 200%;
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 40%;
+            animation: rotateWave 15s linear infinite;
+        }
+
+        .wave:nth-child(1) {
+            top: 60%;
+            left: -50%;
+            animation-duration: 20s;
+        }
+
+        .wave:nth-child(2) {
+            top: 55%;
+            left: -40%;
+            background: rgba(43, 108, 176, 0.05);
+            animation-duration: 25s;
+            animation-direction: reverse;
+        }
+
+        .wave:nth-child(3) {
+            top: 65%;
+            left: -60%;
+            background: rgba(255, 255, 255, 0.15);
+            animation-duration: 30s;
+        }
+
+        @keyframes rotateWave {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .login-card {
+            display: flex;
+            width: 1000px;
+            max-width: 90%;
+            height: 600px;
+            /* 毛玻璃核心实现 */
+            background: var(--card-bg);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border-radius: 24px;
+            border: 1px solid var(--card-border);
+            box-shadow: 0 25px 50px -12px var(--shadow-color);
+            overflow: hidden;
+            position: relative;
+            z-index: 10;
+            opacity: 0;
+            animation: slideUpFade 0.8s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+        }
+
+        @keyframes slideUpFade {
+            from { transform: translateY(30px); opacity: 0; }
+            to { transform: translateY(0); opacity: 1; }
+        }
+
+        /* 左侧愿景区域 (Soft gradient, light theme) */
+        .login-left {
+            flex: 1;
+            /* 使用半透明深蓝色以符合玻璃态要求 */
+            background: var(--left-bg);
+            color: var(--left-text);
+            padding: 60px 40px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+            overflow: hidden;
+            border-right: 1px solid var(--card-border);
+            text-align: center;
+            transition: all 0.5s ease;
+        }
+
+        /* 鼠标悬停左侧区域时背景微微变亮 */
+        .login-left:hover {
+            background: rgba(30, 58, 138, 0.5); /* 稍微增加不透明度 */
+        }
+
+        /* 象征眼睛、波纹、导盲雷达的抽象背景元素 */
+        .vision-waves {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 120%;
+            height: 120%;
+            z-index: 1;
+            opacity: 0.15;
+            transition: transform 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+
+        .login-left:hover .vision-waves {
+            transform: translate(-50%, -50%) scale(1.05);
+            opacity: 0.25;
+        }
+
+        /* 雷达扫描动画 */
+        @keyframes radarScan {
+            0% { transform: translate(-50%, -50%) rotate(0deg); }
+            100% { transform: translate(-50%, -50%) rotate(360deg); }
+        }
+
+        .radar-line {
+            transform-origin: center;
+            animation: radarScan 8s linear infinite;
+        }
+
+        /* 呼吸灯效果 */
+        @keyframes pulse {
+            0% { r: 18; opacity: 0.8; }
+            50% { r: 24; opacity: 0.3; }
+            100% { r: 18; opacity: 0.8; }
+        }
+        
+        .pulse-circle {
+            animation: pulse 3s ease-in-out infinite;
+        }
+
+        /* Subtle background shapes */
+        .shape-circle {
+            position: absolute;
+            top: -100px;
+            left: -100px;
+            width: 300px;
+            height: 300px;
+            background: #e2e8f0;
+            border-radius: 50%;
+            opacity: 0.5;
+            filter: blur(40px);
+        }
+
+        .shape-blob {
+            position: absolute;
+            bottom: -50px;
+            right: -50px;
+            width: 250px;
+            height: 250px;
+            background: #cbd5e1;
+            border-radius: 40% 60% 70% 30% / 40% 50% 60% 50%;
+            opacity: 0.4;
+            filter: blur(30px);
+        }
+
+        .vision-content {
+            position: relative;
+            z-index: 2;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        .logo-img-large {
+            width: 80px;
+            height: 80px;
+            border-radius: 20px;
+            object-fit: cover;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.1);
+            margin-bottom: 30px;
+        }
+
+        .login-left h2 {
+            font-size: 2.2rem;
+            font-weight: 800;
+            margin-bottom: 15px;
+            color: white;
+            letter-spacing: 0.5px;
+        }
+
+        .login-left p {
+            font-size: 1.05rem;
+            line-height: 1.6;
+            color: #bcccdc;
+            max-width: 80%;
+        }
+
+        /* 右侧登录表单区域 */
+        .login-right {
+            flex: 1;
+            padding: 60px 80px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            background: transparent;
+            position: relative;
+        }
+
+        .form-header {
+            text-align: center;
+            margin-bottom: 40px;
+        }
+
+        .form-header h3 {
+            font-size: 2rem;
+            color: var(--text-primary);
+            margin-bottom: 10px;
+            font-weight: 800;
+        }
+
+        .form-header p {
+            color: var(--text-secondary);
+            font-size: 0.95rem;
+        }
+
+        /* Neumorphic/Glassmorphic Input Fields */
+        .input-group {
+            margin-bottom: 24px;
+        }
+
+        .custom-input {
+            width: 100%;
+            padding: 16px 20px;
+            background: var(--input-bg);
+            border: 1px solid var(--input-border);
+            border-radius: 12px;
+            font-size: 1rem;
+            color: var(--text-primary);
+            transition: all 0.3s ease;
+            box-shadow: inset 0 2px 4px rgba(0,0,0,0.05);
+        }
+
+        .custom-input:focus {
+            outline: none;
+            background: rgba(255, 255, 255, 0.8);
+            border-color: var(--btn-bg);
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2), inset 0 2px 4px rgba(0,0,0,0.05);
+        }
+        
+        .custom-input::placeholder {
+            color: var(--text-secondary);
+            opacity: 0.7;
+        }
+
+        /* 醒目且温暖的按钮 */
+        .submit-btn {
+            width: 100%;
+            padding: 16px;
+            background: linear-gradient(135deg, var(--btn-bg) 0%, var(--btn-hover) 100%);
+            color: var(--btn-text);
+            border: none;
+            border-radius: 30px;
+            font-size: 1.1rem;
+            font-weight: 700;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            margin-top: 20px;
+            box-shadow: 0 10px 20px var(--btn-shadow);
+        }
+
+        .submit-btn:hover {
+            transform: translateY(-2px);
+            background: linear-gradient(135deg, var(--btn-hover) 0%, var(--btn-bg) 100%);
+            box-shadow: 0 12px 25px var(--btn-shadow);
+        }
+        
+        .submit-btn:active {
+            transform: translateY(1px);
+            box-shadow: 0 5px 10px var(--btn-shadow);
+        }
+
+        .submit-btn:disabled {
+            background: var(--text-secondary);
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+
+        .error-message {
+            margin-top: 16px;
+            padding: 12px;
+            background: #ffe3e3;
+            color: #d64545;
+            border-radius: 8px;
+            font-size: 0.9rem;
+            text-align: center;
+            border: 1px solid #ffbbbc;
+            display: none;
+        }
+
+        .login-tip {
+            margin-bottom: 20px;
+            padding: 14px 16px;
+            background: rgba(43, 108, 176, 0.08);
+            border: 1px solid rgba(43, 108, 176, 0.18);
+            border-radius: 12px;
+            color: var(--text-primary);
+            font-size: 0.92rem;
+            line-height: 1.6;
+        }
+
+        .login-tip strong {
+            color: var(--btn-bg);
+            font-weight: 800;
+        }
+
+        /* 响应式 */
+        @media (max-width: 900px) {
+            .login-card {
+                flex-direction: column;
+                height: auto;
+                max-height: 95vh;
+                overflow-y: auto;
+                border-radius: 20px;
+            }
+            .login-left {
+                padding: 40px 30px;
+                border-right: none;
+                border-bottom: 1px solid #e2e8f0;
+            }
+            .login-right {
+                padding: 40px 30px;
+            }
+            .shape-circle, .shape-blob {
+                display: none;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- 动态波浪背景 -->
+    <div class="wave-bg">
+        <div class="wave"></div>
+        <div class="wave"></div>
+        <div class="wave"></div>
+    </div>
+
+    <div class="login-card">
+        <!-- 左侧愿景区域 -->
+        <div class="login-left">
+            <!-- 抽象雷达/眼睛波纹 SVG -->
+            <svg class="vision-waves" viewBox="0 0 400 400" xmlns="http://www.w3.org/2000/svg">
+                <!-- 呼吸效果的中心点 -->
+                <circle cx="200" cy="200" r="20" fill="#ffffff" class="pulse-circle"/>
+                
+                <circle cx="200" cy="200" r="80" fill="none" stroke="#ffffff" stroke-width="2"/>
+                <circle cx="200" cy="200" r="140" fill="none" stroke="#ffffff" stroke-width="1.5" stroke-dasharray="10 10"/>
+                <circle cx="200" cy="200" r="200" fill="none" stroke="#ffffff" stroke-width="1" stroke-opacity="0.5"/>
+                
+                <!-- 旋转的雷达扫描线 -->
+                <path class="radar-line" d="M 200 200 L 340 200 A 140 140 0 0 1 200 340 Z" fill="rgba(255,255,255,0.05)" />
+                
+                <path d="M 200 120 C 240 120 280 160 280 200 C 280 240 240 280 200 280 C 160 280 120 240 120 200 C 120 160 160 120 200 120 Z" fill="none" stroke="#ffffff" stroke-width="2"/>
+            </svg>
+
+            <div class="shape-circle"></div>
+            <div class="shape-blob"></div>
+
+            <div class="vision-content">
+                <img src="/static/icon.png" alt="VisionBridge Logo" class="logo-img-large" onerror="this.style.display='none'">
+                <h2>点亮视界<br>桥接未来</h2>
+                <p>视桥智导 (VisionBridge) 致力于利用前沿的人工智能与环境感知技术，为视障群体搭建一座安全、可靠的出行桥梁，让每一步都走得踏实与自信。</p>
+                <div style="display: flex; gap: 10px; margin-top: 20px;">
+                    <span style="background: rgba(255,255,255,0.2); padding: 6px 12px; border-radius: 20px; font-size: 0.85rem;">障碍识别</span>
+                    <span style="background: rgba(255,255,255,0.2); padding: 6px 12px; border-radius: 20px; font-size: 0.85rem;">精准导航</span>
+                    <span style="background: rgba(255,255,255,0.2); padding: 6px 12px; border-radius: 20px; font-size: 0.85rem;">语音交互</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- 右侧表单区域 -->
+        <div class="login-right">
+            <div class="form-header">
+                <h3>欢迎回来</h3>
+                <p>请登录管理后台以监控和维护系统服务</p>
+            </div>
+
+            <div class="login-tip">
+                默认账号：<strong>admin</strong><br>
+                默认密码：<strong>admin888</strong>
+            </div>
+
+            <form id="loginForm" onsubmit="return false;">
+                <div class="input-group">
+                    <input type="text" id="username" class="custom-input" placeholder="输入账号 (如: admin)" value="admin" required>
+                </div>
+                
+                <div class="input-group">
+                    <input type="password" id="password" class="custom-input" placeholder="输入密码" value="admin888" required>
+                </div>
+
+                <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 24px;">
+                    <label style="display: flex; align-items: center; cursor: pointer; color: var(--text-secondary); font-size: 0.9rem;">
+                        <input type="checkbox" style="margin-right: 8px; width: 16px; height: 16px; accent-color: var(--btn-bg);">
+                        记住我的登录状态
+                    </label>
+                </div>
+
+                <button type="button" id="loginBtn" class="submit-btn">
+                    安全登录
+                </button>
+                
+                <div id="errorMsg" class="error-message"></div>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        document.getElementById('loginBtn').addEventListener('click', async function(e) {
+            e.preventDefault();
+            
+            const username = document.getElementById('username').value;
+            const password = document.getElementById('password').value;
+            const errorMsg = document.getElementById('errorMsg');
+            const btn = document.getElementById('loginBtn');
+            
+            if (!username || !password) {
+                errorMsg.textContent = '请输入账号和密码';
+                errorMsg.style.display = 'block';
+                return;
+            }
+            
+            const originalText = btn.innerHTML;
+            btn.innerHTML = '验证中...';
+            btn.disabled = true;
+            errorMsg.style.display = 'none';
+
+            try {
+                const formData = new URLSearchParams();
+                formData.append('username', username);
+                formData.append('password', password);
+
+                const res = await fetch('/api/admin/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                    body: formData.toString()
+                });
+
+                let data;
+                try {
+                    data = await res.json();
+                } catch (e) {
+                    console.error("JSON parse error:", e);
+                    window.location.href = '/admin/dashboard';
+                    return;
+                }
+
+                if (data.success) {
+                    window.location.href = '/admin/dashboard';
+                } else {
+                    errorMsg.textContent = data.message || '账号或密码错误';
+                    errorMsg.style.display = 'block';
+                    btn.innerHTML = originalText;
+                    btn.disabled = false;
+                }
+            } catch (err) {
+                console.error("Login failed:", err);
+                errorMsg.textContent = '网络请求失败，请检查服务器连接';
+                errorMsg.style.display = 'block';
+                btn.innerHTML = originalText;
+                btn.disabled = false;
+            }
+        });
+    </script>
+</body>
+</html>

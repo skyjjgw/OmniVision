@@ -1,0 +1,389 @@
+<!doctype html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="initial-scale=1.0, user-scalable=no, width=device-width">
+    <title>导航</title>
+    <style>
+        html, body, #container {
+            width: 100%;
+            height: 100%;
+            margin: 0;
+            font-family: "Microsoft YaHei", sans-serif;
+        }
+        #panel {
+            position: fixed;
+            background-color: white;
+            max-height: 40%;
+            overflow-y: auto;
+            bottom: 10px;
+            left: 10px;
+            right: 10px;
+            border: 1px solid silver;
+            border-radius: 5px;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+            z-index: 999;
+            padding: 10px;
+        }
+        .amap-call {
+            display: none !important;
+        }
+        .info-title {
+            font-weight: bold;
+            font-size: 16px;
+            margin-bottom: 5px;
+        }
+        .info-content {
+            font-size: 14px;
+            color: #666;
+        }
+    </style>
+    <script type="text/javascript">
+        window._AMapSecurityConfig = {
+            securityJsCode: '4f72d4e8fe05bbbcb2b685a0a39b9da6',
+        }
+    </script>
+    <script src="https://webapi.amap.com/maps?v=1.4.15&key=539153aae5fa1421a5d195af77e65e17"></script>
+</head>
+<body>
+<div id="container"></div>
+<div id="panel">
+    <div class="info-title">准备就绪</div>
+    <div class="info-content">等待指令...</div>
+</div>
+
+<script type="text/javascript">
+    // Initialize Map
+    var map = new AMap.Map("container", {
+        resizeEnable: true,
+        center: [116.397428, 39.90923],
+        zoom: 13
+    });
+
+    // Add Contribution Markers (Obstacles & Shops)
+    function loadContributions() {
+        // Fetch Obstacles
+        fetch('/api/obstacles')
+            .then(res => res.json())
+            .then(data => {
+                data.forEach(obs => {
+                    if (obs.lat && obs.lng) {
+                        var marker = new AMap.Marker({
+                            position: [obs.lng, obs.lat],
+                            icon: 'https://webapi.amap.com/theme/v1.3/markers/n/mark_r.png', // Red for obstacles
+                            map: map,
+                            title: obs.title || '障碍物'
+                        });
+                        marker.setLabel({
+                            offset: new AMap.Pixel(20, 20),
+                            content: obs.title || '障碍物'
+                        });
+                    }
+                });
+            })
+            .catch(err => console.error("Failed to load obstacles:", err));
+
+        // Fetch Shops
+        fetch('/api/shops')
+            .then(res => res.json())
+            .then(data => {
+                data.forEach(shop => {
+                    if (shop.lat && shop.lng) {
+                        var marker = new AMap.Marker({
+                            position: [shop.lng, shop.lat],
+                            icon: 'https://webapi.amap.com/theme/v1.3/markers/n/mark_b.png', // Blue for shops
+                            map: map,
+                            title: shop.title || '店铺'
+                        });
+                        marker.setLabel({
+                            offset: new AMap.Pixel(20, 20),
+                            content: shop.title || '店铺'
+                        });
+                    }
+                });
+            })
+            .catch(err => console.error("Failed to load shops:", err));
+    }
+
+    // Call loadContributions on startup
+    loadContributions();
+
+    // Walking Plugin
+    var walking = new AMap.Walking({
+        map: map,
+        panel: "panel" 
+    });
+    
+    // Driving Plugin
+    var driving = new AMap.Driving({
+        map: map,
+        panel: "panel"
+    });
+
+    // Navigation State
+    var currentRoute = [];
+    var currentRouteSteps = [];
+    var currentDestinationName = '';
+    var currentInstructionText = '';
+    var currentRoutePolyline = null;
+    var destinationMarker = null;
+    var userMarker = null;
+    var prevLngLat = null;
+    var deviceMarkers = {}; // Store markers for multiple devices: { client_id: Marker }
+
+    // Paper Plane SVG Icon (Blue) for generic/user
+    var planeIconContent = '<div style="width:32px; height:32px; transform: rotate(0deg);">' +
+        '<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">' +
+        '<path d="M12 2L2 22L12 18L22 22L12 2Z" fill="#2196F3" stroke="white" stroke-width="2" stroke-linejoin="round"/>' +
+        '</svg></div>';
+        
+    // Arrow Icon for Device Orientation
+    function getDeviceIcon(color, rotation) {
+        // Ensure rotation is valid
+        var rot = rotation || 0;
+        return `<div style="width:40px; height:40px; transform: rotate(${rot}deg); transition: transform 0.3s ease;">` +
+            `<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">` +
+            `<circle cx="12" cy="12" r="10" fill="${color}" fill-opacity="0.2" stroke="${color}" stroke-width="1"/>` +
+            `<path d="M12 4L16 16L12 14L8 16L12 4Z" fill="${color}" stroke="white" stroke-width="2" stroke-linejoin="round"/>` +
+            `</svg></div>`;
+    }
+
+    function updateDeviceMarker(clientId, lat, lon, angle, name, isActive) {
+        if (angle === undefined) angle = 0;
+        if (name === undefined) name = "Device";
+        if (isActive === undefined) isActive = false;
+        if (lat == null || lon == null) return;
+        var lngLat = new AMap.LngLat(parseFloat(lon), parseFloat(lat));
+        _renderMarker(clientId, lngLat, angle, name, isActive);
+    }
+
+    function _renderMarker(clientId, lngLat, angle, name, isActive) {
+        var color = isActive ? '#10B981' : '#3B82F6'; // Green for active, Blue for others
+        var zIndex = isActive ? 100 : 10;
+
+        if (!deviceMarkers[clientId]) {
+            // Create new marker
+            var marker = new AMap.Marker({
+                map: map,
+                position: lngLat,
+                content: getDeviceIcon(color, angle),
+                offset: new AMap.Pixel(-20, -20),
+                anchor: 'center',
+                title: name,
+                zIndex: zIndex
+            });
+            
+            // Add label
+            marker.setLabel({
+                offset: new AMap.Pixel(0, -25),
+                content: `<div style="background:white; padding:2px 5px; border-radius:4px; border:1px solid #ccc; font-size:10px;">${name}</div>`,
+                direction: 'top'
+            });
+            
+            deviceMarkers[clientId] = marker;
+        } else {
+            // Update existing
+            var marker = deviceMarkers[clientId];
+            marker.setPosition(lngLat);
+            marker.setContent(getDeviceIcon(color, angle)); // Update rotation & color
+            marker.setZIndex(zIndex);
+        }
+        
+        // If this is the active device (from URL param OR message flag), center map
+        if (isActive) {
+             map.setCenter(lngLat);
+        }
+        
+        var urlParams = new URLSearchParams(window.location.search);
+        var activeId = urlParams.get('client_id');
+        if (activeId === clientId) {
+             map.setCenter(lngLat);
+        }
+    }
+
+    function renderRoute(routePayload) {
+        currentRoute = Array.isArray(routePayload && routePayload.route) ? routePayload.route : [];
+        currentRouteSteps = Array.isArray(routePayload && routePayload.steps) ? routePayload.steps : [];
+        currentDestinationName = (routePayload && routePayload.destination_name) || '';
+        currentInstructionText = (routePayload && routePayload.instruction_text) || '';
+        var navStatus = (routePayload && routePayload.nav_status) || '';
+
+        if (currentRoutePolyline) {
+            map.remove(currentRoutePolyline);
+            currentRoutePolyline = null;
+        }
+        if (destinationMarker) {
+            map.remove(destinationMarker);
+            destinationMarker = null;
+        }
+
+        if (!currentRoute.length) {
+            var emptyTitle = currentDestinationName ? ('导航已结束：' + currentDestinationName) : '准备就绪';
+            document.getElementById('panel').innerHTML = '<div class="info-title">' + emptyTitle + '</div><div class="info-content">等待新的真实路线下发...</div>';
+            return;
+        }
+
+        var strokeColor = navStatus.toUpperCase() === 'SIMULATED' ? '#22C55E' : '#2563EB';
+
+        currentRoutePolyline = new AMap.Polyline({
+            map: map,
+            path: currentRoute,
+            strokeColor: strokeColor,
+            strokeWeight: 6,
+            strokeOpacity: 0.92,
+            showDir: true,
+            zIndex: 80
+        });
+
+        var endPoint = currentRoute[currentRoute.length - 1];
+        destinationMarker = new AMap.Marker({
+            map: map,
+            position: endPoint,
+            label: {
+                offset: new AMap.Pixel(20, 0),
+                content: currentDestinationName || '目的地'
+            }
+        });
+
+        map.setFitView([currentRoutePolyline, destinationMarker]);
+        var panelText = currentInstructionText || (currentDestinationName ? ('正在前往 ' + currentDestinationName) : '已收到后端真实路线');
+        document.getElementById('panel').innerHTML = '<div class="info-title">' + (currentDestinationName || '导航中') + '</div><div class="info-content">' + panelText + '</div>';
+    }
+
+    function updatePosition(lat, lon) {
+        var newLngLat = new AMap.LngLat(lon, lat);
+        var angle = 0;
+
+        if (prevLngLat) {
+            var dx = newLngLat.getLng() - prevLngLat.getLng();
+            var dy = newLngLat.getLat() - prevLngLat.getLat();
+
+            if (Math.abs(dx) > 0.000001 || Math.abs(dy) > 0.000001) {
+                var rad = Math.atan2(dy, dx);
+                var deg = rad * 180 / Math.PI;
+                angle = 90 - deg;
+                if (userMarker) userMarker.setAngle(angle);
+            }
+        }
+
+        if (!userMarker) {
+             userMarker = new AMap.Marker({
+                map: map,
+                position: newLngLat,
+                content: planeIconContent,
+                offset: new AMap.Pixel(-16, -16),
+                angle: angle
+            });
+        } else {
+            userMarker.setPosition(newLngLat);
+            userMarker.setAngle(angle);
+        }
+
+        prevLngLat = newLngLat;
+        map.setCenter(newLngLat);
+
+        if (map.getZoom() < 17) {
+            map.setZoom(17);
+        }
+    }
+    
+    function checkNavigationProgress(lat, lon) {
+        if (currentSteps.length === 0) return;
+        
+        var minDistance = 1000000;
+        var closestStepIndex = -1;
+        var myPos = new AMap.LngLat(lon, lat);
+        
+        for (var i = 0; i < currentSteps.length; i++) {
+            var step = currentSteps[i];
+            var stepPos = step.start_location;
+            var dist = myPos.distance(stepPos);
+            
+            if (dist < minDistance) {
+                minDistance = dist;
+                closestStepIndex = i;
+            }
+        }
+        
+        if (closestStepIndex !== -1 && closestStepIndex > lastPlayedStepIndex) {
+            if (minDistance < 50 || closestStepIndex === 0) {
+                var instruction = currentSteps[closestStepIndex].instruction;
+                
+                var data = {
+                    "index": closestStepIndex,
+                    "instruction": instruction,
+                    "distance_to_turn": Math.round(minDistance)
+                };
+                
+                console.log("NAV_INSTRUCTION: ", data);
+                window.parent.postMessage({
+                    type: "NAV_INSTRUCTION",
+                    data: data
+                }, "*");
+                
+                lastPlayedStepIndex = closestStepIndex;
+            }
+        }
+    }
+    
+    // URL Param parsing
+    function getQueryParam(name) {
+        var reg = new RegExp("(^|&)" + name + "=([^&]*)(&|$)", "i");
+        var r = window.location.search.substr(1).match(reg);
+        if (r != null) return decodeURIComponent(r[2]);
+        return null;
+    }
+
+    var routeClientId = getQueryParam('client_id');
+    var wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    var ws = new WebSocket(wsProtocol + '//' + window.location.host + '/ws/stream');
+    ws.onmessage = function(event) {
+        try {
+            var msg = JSON.parse(event.data);
+            if (routeClientId && msg.client_id && msg.client_id !== routeClientId) {
+                return;
+            }
+            if (msg.type === 'route_update') {
+                renderRoute(msg);
+            } else if (msg.type === 'navigation_instruction' && msg.text) {
+                currentInstructionText = msg.text;
+                var title = currentDestinationName || '导航中';
+                document.getElementById('panel').innerHTML = '<div class="info-title">' + title + '</div><div class="info-content">' + msg.text + '</div>';
+            }
+        } catch (err) {
+            console.error('route ws parse error', err);
+        }
+    };
+
+    window.addEventListener("message", function(event) {
+        var msg = event.data;
+        if (msg.type === "UPDATE_POSITION") {
+            updatePosition(msg.lat, msg.lon);
+        } else if (msg.type === "DEVICE_UPDATE") {
+            var dev = msg.device;
+            if (dev && dev.lat && dev.lng) {
+                updateDeviceMarker(dev.id, dev.lat, dev.lng, dev.angle || 0, dev.name, dev.isActive);
+                if (!routeClientId || routeClientId === dev.id) {
+                    updatePosition(dev.lat, dev.lng);
+                    
+                    // 同步路线 (应对大屏轮询传来的数据)
+                    if (dev.route_payload && dev.route_payload.route && dev.route_payload.route.length > 0) {
+                        if (!currentRoute.length || dev.route_payload.updated_at > (window.lastRouteUpdateTs || 0)) {
+                            window.lastRouteUpdateTs = dev.route_payload.updated_at || 0;
+                            renderRoute(dev.route_payload);
+                        }
+                    } else if (!dev.route_payload || !dev.route_payload.route || dev.route_payload.route.length === 0) {
+                        if (currentRoute.length > 0) {
+                            renderRoute({ route: [] });
+                        }
+                    }
+                }
+            }
+        } else if (msg.type === 'ROUTE_UPDATE' && msg.data) {
+            renderRoute(msg.data);
+        }
+    });
+</script>
+</body>
+</html>

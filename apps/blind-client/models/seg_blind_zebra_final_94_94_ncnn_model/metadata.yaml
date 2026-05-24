@@ -1,0 +1,19 @@
+description: Ultralytics YOLOv8n-seg model trained on /root/autodl-tmp/merged_seg_dataset/data.yaml
+author: Ultralytics
+date: '2026-03-29T00:31:10.494829'
+version: 8.3.235
+license: AGPL-3.0 License (https://ultralytics.com/license)
+docs: https://docs.ultralytics.com
+stride: 32
+task: segment
+batch: 1
+imgsz:
+- 480
+- 480
+names:
+  0: tactile_paving
+  1: zebra_crossing
+args:
+  batch: 1
+  half: true
+channels: 3

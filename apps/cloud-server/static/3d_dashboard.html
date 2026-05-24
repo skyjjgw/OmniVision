@@ -1,0 +1,1468 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>视障出行 3D 智慧管控大屏</title>
+    <!-- Tailwind CSS (Dark Mode 优化) -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        darkbg: '#0B0F19',
+                        darkpanel: '#1A2235',
+                        neonblue: '#00F0FF',
+                        neongreen: '#00FF66'
+                    }
+                }
+            }
+        }
+    </script>
+    <!-- 高德地图 JS API 2.0 (包含 3D 与热力图组件) -->
+    <script type="text/javascript">
+        window._AMapSecurityConfig = {
+            securityJsCode: '4f72d4e8fe05bbbcb2b685a0a39b9da6', // 正确的 securityJsCode
+        }
+    </script>
+    <script src="https://webapi.amap.com/maps?v=2.0&key=539153aae5fa1421a5d195af77e65e17&plugin=AMap.Object3DLayer,AMap.HeatMap,AMap.ControlBar"></script>
+    <!-- ECharts 数据可视化库 -->
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
+
+    <style>
+        body { background-color: #0B0F19; color: #E2E8F0; overflow: hidden; margin: 0; padding: 0; font-family: 'Microsoft YaHei', sans-serif; }
+        #map-container { width: 100%; height: 100%; }
+        /* 半透明磨砂玻璃面板效果 (更透明、更具玻璃质感版) */
+        .glass-panel {
+            background: rgba(255, 255, 255, 0.4);
+            backdrop-filter: blur(24px);
+            -webkit-backdrop-filter: blur(24px);
+            border: 1px solid rgba(255, 255, 255, 0.6);
+            box-shadow: 0 4px 24px rgba(0, 0, 0, 0.05), inset 0 0 0 1px rgba(255, 255, 255, 0.2);
+            border-radius: 12px;
+            position: relative;
+            color: #334155;
+        }
+
+        /* 隐藏高德地图 Logo */
+        .amap-logo, .amap-copyright { display: none !important; }
+        
+        /* 自定义滚动条 (亮色版) */
+        .custom-scrollbar::-webkit-scrollbar { width: 4px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: rgba(0, 0, 0, 0.05); }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(59, 130, 246, 0.5); border-radius: 4px; }
+
+        .flow-tab {
+            border: 1px solid rgba(148, 163, 184, 0.25);
+            background: rgba(255, 255, 255, 0.5);
+            color: #475569;
+            transition: all 0.2s ease;
+        }
+        .flow-tab:hover {
+            background: rgba(255, 255, 255, 0.85);
+            color: #1d4ed8;
+        }
+        .flow-tab.active {
+            background: linear-gradient(135deg, rgba(59, 130, 246, 0.14), rgba(99, 102, 241, 0.18));
+            border-color: rgba(99, 102, 241, 0.25);
+            color: #1d4ed8;
+            box-shadow: inset 0 0 0 1px rgba(255,255,255,0.35);
+        }
+        .flow-node {
+            position: relative;
+            flex: 1;
+            min-width: 0;
+            padding-top: 12px;
+        }
+        .flow-node::before {
+            content: '';
+            position: absolute;
+            top: 17px;
+            left: 0;
+            right: 0;
+            height: 2px;
+            background: rgba(148, 163, 184, 0.3);
+        }
+        .flow-node:first-child::before {
+            left: 50%;
+        }
+        .flow-node:last-child::before {
+            right: 50%;
+        }
+        .flow-node-dot {
+            position: relative;
+            z-index: 1;
+            width: 12px;
+            height: 12px;
+            margin: 0 auto 10px;
+            border-radius: 9999px;
+            border: 2px solid rgba(255,255,255,0.95);
+            background: #cbd5e1;
+            box-shadow: 0 0 0 4px rgba(255,255,255,0.2);
+        }
+        .flow-node.active .flow-node-dot {
+            background: linear-gradient(135deg, #3b82f6, #6366f1);
+            box-shadow: 0 0 0 6px rgba(99, 102, 241, 0.12);
+            animation: pulse 1.6s infinite;
+        }
+        .flow-node.done .flow-node-dot {
+            background: #10b981;
+        }
+        .flow-node-label {
+            text-align: center;
+            font-size: 11px;
+            line-height: 1.35;
+            color: #64748b;
+            font-weight: 700;
+        }
+        .flow-node.active .flow-node-label,
+        .flow-node.done .flow-node-label {
+            color: #1e293b;
+        }
+        .signal-chip {
+            background: rgba(255,255,255,0.72);
+            border: 1px solid rgba(148, 163, 184, 0.18);
+            border-radius: 12px;
+            padding: 10px 12px;
+        }
+        @keyframes pulse {
+            0% { transform: scale(0.98); box-shadow: 0 0 0 0 rgba(99,102,241,0.22); }
+            70% { transform: scale(1.05); box-shadow: 0 0 0 10px rgba(99,102,241,0); }
+            100% { transform: scale(0.98); box-shadow: 0 0 0 0 rgba(99,102,241,0); }
+        }
+    </style>
+</head>
+<body class="w-screen h-screen relative">
+
+    <!-- 全屏 3D 沉浸式地图 (作为底图背景) -->
+    <section class="absolute inset-0 z-0">
+        <div id="map-container"></div>
+    </section>
+
+    <!-- 顶部居中悬浮状态栏 (系统状态与时间) -->
+    <div class="absolute top-4 left-1/2 -translate-x-1/2 z-20 flex gap-6 text-sm text-slate-700 font-bold bg-white/80 px-6 py-2 rounded-full border border-slate-200/50 backdrop-blur-md shadow-sm pointer-events-auto">
+        <div class="flex items-center gap-2"><div id="system-status-dot" class="w-2 h-2 rounded-full bg-slate-400"></div> 系统状态: <span id="system-status-text" class="text-slate-500 font-mono">等待设备</span></div>
+        <div>当前时间: <span id="clock" class="font-mono text-slate-800"></span></div>
+    </div>
+
+    <!-- 左侧数据分析面板 (悬浮，三模块之一) -->
+    <aside id="left-panel" class="absolute top-6 bottom-6 left-6 w-96 flex flex-col gap-6 z-10 transition-transform duration-500 ease-in-out">
+        
+        <!-- 左侧面板 1：核心指标 -->
+        <div class="glass-panel p-5 h-48 flex flex-col justify-center">
+            <h2 class="text-blue-700 text-sm font-bold mb-4 flex items-center gap-2"><i class="fas fa-chart-line"></i> 今日出行态势</h2>
+            <div class="grid grid-cols-2 gap-4">
+                <div class="bg-blue-50/50 p-3 rounded-xl border border-blue-100/50 backdrop-blur-sm">
+                    <div class="text-slate-500 text-xs mb-1">活跃盲人终端</div>
+                    <div class="text-3xl font-mono text-slate-800"><span id="stat-active-users">--</span><span class="text-xs text-green-600 ml-2">↑ 实时</span></div>
+                </div>
+                <div class="bg-indigo-50/50 p-3 rounded-xl border border-indigo-100/50 backdrop-blur-sm">
+                    <div class="text-slate-500 text-xs mb-1">众包障碍点数</div>
+                    <div class="text-3xl font-mono text-indigo-600"><span id="stat-obstacles">--</span><span class="text-xs text-green-600 ml-2">↑ 实时</span></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 左侧面板 2：宏观+微观导盲可视化流程 -->
+        <div class="glass-panel p-5 flex-1 flex flex-col min-h-0 overflow-y-auto custom-scrollbar pr-2">
+            <div class="flex items-start justify-between gap-3 mb-3">
+                <div>
+                    <h2 class="text-blue-700 text-sm font-bold mb-1 flex items-center gap-2">
+                        <i class="fas fa-route"></i> 宏观 + 微观导盲流程
+                    </h2>
+                    <p class="text-[11px] text-slate-500">将高德宏观导航、豆包多模态视频交互、服务器微观导航决策与人工接力整合为统一闭环。</p>
+                </div>
+                <div id="guide-flow-mode-badge" class="px-3 py-1 rounded-full text-[11px] font-bold bg-blue-100 text-blue-700 whitespace-nowrap">宏观规划</div>
+            </div>
+
+            <div id="guide-flow-tabs" class="grid grid-cols-2 gap-2 mb-3">
+                <button class="flow-tab active rounded-xl px-3 py-2 text-xs font-bold" data-mode="macro">宏观规划</button>
+                <button class="flow-tab rounded-xl px-3 py-2 text-xs font-bold" data-mode="doubao">豆包交互</button>
+                <button class="flow-tab rounded-xl px-3 py-2 text-xs font-bold" data-mode="micro">微观导航</button>
+                <button class="flow-tab rounded-xl px-3 py-2 text-xs font-bold" data-mode="assist">人工接力</button>
+            </div>
+
+            <div class="bg-white/60 rounded-2xl border border-white/60 px-4 py-4 shadow-sm mb-3">
+                <div class="flex items-center justify-between mb-3">
+                    <div>
+                        <div id="guide-flow-stage" class="text-sm font-bold text-slate-800">高德地图宏观路线规划</div>
+                        <div id="guide-flow-summary" class="text-[11px] text-slate-500 mt-1">优先解决“从哪里走”，输出可执行主路线。</div>
+                    </div>
+                    <div id="guide-flow-status" class="text-[11px] font-bold text-emerald-600 bg-emerald-50 px-2.5 py-1 rounded-full">运行中</div>
+                </div>
+                <div id="guide-flow-track" class="flex items-start gap-2"></div>
+            </div>
+
+            <div id="guide-flow-metrics" class="grid grid-cols-3 gap-3 mb-3"></div>
+
+            <div class="rounded-2xl bg-white/55 border border-white/60 p-4">
+                <div class="text-xs font-bold text-slate-500 mb-2 flex items-center gap-2">
+                    <i class="fas fa-wave-square text-blue-500"></i> 实时导盲交互
+                </div>
+                <div id="guide-flow-title" class="text-base font-bold text-slate-800 mb-2">主路线规划优先</div>
+                <div id="guide-flow-desc" class="text-sm text-slate-600 leading-6 mb-3"></div>
+                <div id="guide-flow-signals" class="space-y-2 pb-1"></div>
+            </div>
+        </div>
+        
+        <!-- 左侧面板收起按钮 -->
+        <button id="btn-toggle-left" class="absolute -right-4 top-1/2 -translate-y-1/2 w-8 h-16 bg-white/80 backdrop-blur border border-slate-200 rounded-r-xl shadow-md flex items-center justify-center text-slate-500 hover:text-blue-600 hover:bg-white transition-colors">
+            <svg class="w-4 h-4 transform transition-transform duration-300" id="icon-left" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"></path></svg>
+        </button>
+    </aside>
+
+    <!-- 右侧数据分析面板 (悬浮，三模块之三) -->
+    <aside id="right-panel" class="absolute top-6 bottom-6 right-6 w-96 flex flex-col gap-6 z-10 transition-transform duration-500 ease-in-out">
+        
+        <!-- 右侧面板 0：在线设备选择 (新增模块) -->
+        <div class="glass-panel p-4 flex flex-col shrink-0 relative overflow-visible">
+            <h2 class="text-blue-700 text-sm font-bold mb-3 flex items-center gap-2">
+                <i class="fas fa-video"></i>
+                快速监控在线设备
+            </h2>
+            <select 
+                id="monitor-device-selector"
+                class="w-full bg-slate-50 border border-slate-200 text-slate-700 text-sm rounded-lg px-3 py-2 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-colors shadow-sm cursor-pointer"
+                onchange="handleDeviceSelect(this.value)"
+            >
+                <option value="">全部设备/全局监控 (默认)</option>
+                <!-- 动态生成设备列表 -->
+            </select>
+            <button onclick="refreshDeviceList()" class="absolute top-4 right-4 text-slate-400 hover:text-blue-500 transition-colors" title="刷新列表">
+                <i class="fas fa-sync-alt"></i>
+            </button>
+        </div>
+
+        <!-- 右侧面板 1：实时众包路障情报 -->
+        <div class="glass-panel p-5 h-64 flex flex-col">
+            <h2 class="text-blue-700 text-sm font-bold mb-3 flex items-center gap-2">
+                <svg class="w-4 h-4 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
+                实时众包路障情报
+            </h2>
+            <ul class="space-y-3 flex-1 overflow-y-auto pr-2 custom-scrollbar mt-2" id="crowdsource-feed"></ul>
+        </div>
+
+        <!-- 右侧面板 2：设备状态分布 (饼图) -->
+        <div class="glass-panel p-4 flex flex-col flex-1">
+            <h2 class="text-blue-700 text-sm font-bold flex items-center gap-2 mb-1">在线设备健康状态</h2>
+            <div id="chart-pie" class="flex-1 w-full"></div>
+        </div>
+
+        <!-- 右侧面板收起按钮 -->
+        <button id="btn-toggle-right" class="absolute -left-4 top-1/2 -translate-y-1/2 w-8 h-16 bg-white/80 backdrop-blur border border-slate-200 rounded-l-xl shadow-md flex items-center justify-center text-slate-500 hover:text-blue-600 hover:bg-white transition-colors">
+            <svg class="w-4 h-4 transform transition-transform duration-300" id="icon-right" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path></svg>
+        </button>
+
+    </aside>
+
+    <!-- 中间底部控制台 (悬浮) -->
+    <div class="absolute bottom-6 left-1/2 -translate-x-1/2 z-20 glass-panel px-4 py-3 flex gap-4 transition-all duration-500 ease-in-out" style="border-radius: 9999px;">
+        
+        <!-- 全局折叠/展开两侧面板按钮 -->
+        <button id="btn-toggle-all" class="bg-white/50 hover:bg-white/80 text-blue-600 px-5 py-2 rounded-full border border-white/60 transition-colors text-sm font-bold shadow-sm flex items-center gap-2 backdrop-blur">
+            <svg id="icon-toggle-all" class="w-4 h-4 transform transition-transform duration-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8h16M4 16h16"></path></svg>
+            <span id="text-toggle-all">收起面板</span>
+        </button>
+
+        <div class="w-px bg-slate-300/50 mx-1"></div> <!-- 分隔线 -->
+
+        <!-- 主题切换下拉菜单 -->
+        <div class="relative">
+            <button id="btn-theme-toggle" class="bg-blue-50 hover:bg-blue-100 text-blue-700 px-5 py-2 rounded-full border border-blue-200 transition-colors text-sm font-bold shadow-sm flex items-center gap-2">
+                🎨 切换地图主题 <i class="fas fa-chevron-up text-xs"></i>
+            </button>
+            <!-- 下拉菜单，添加 pb-3 增加底部感应区，去掉 hover，改为 JS 控制 -->
+            <div id="theme-menu" class="absolute bottom-[calc(100%+8px)] left-0 hidden w-44 bg-white/95 backdrop-blur-md border border-slate-200 rounded-xl shadow-2xl overflow-hidden z-50">
+                <button onclick="changeMapStyle('amap://styles/normal'); closeThemeMenu()" class="w-full text-left px-4 py-3 text-sm text-slate-700 hover:bg-blue-50 border-b border-slate-100 font-medium">标准清晰 (白天)</button>
+                <button onclick="changeMapStyle('amap://styles/macaron'); closeThemeMenu()" class="w-full text-left px-4 py-3 text-sm text-slate-700 hover:bg-blue-50 border-b border-slate-100 font-medium">马卡龙 (浅色)</button>
+                <button onclick="changeMapStyle('amap://styles/light'); closeThemeMenu()" class="w-full text-left px-4 py-3 text-sm text-slate-700 hover:bg-blue-50 border-b border-slate-100 font-medium">月光银白</button>
+                <button onclick="changeMapStyle('amap://styles/darkblue'); closeThemeMenu()" class="w-full text-left px-4 py-3 text-sm text-slate-700 hover:bg-blue-50 border-b border-slate-100 font-medium">极客蓝黑 (暗色)</button>
+                <button onclick="changeMapStyle('amap://styles/blue'); closeThemeMenu()" class="w-full text-left px-4 py-3 text-sm text-slate-700 hover:bg-blue-50 font-medium">靛青蓝</button>
+            </div>
+        </div>
+        
+        <button id="btn-heatmap" class="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 px-5 py-2 rounded-full border border-indigo-200 transition-colors text-sm font-bold shadow-sm">
+            📍 加载真实障碍物
+        </button>
+        <button id="btn-reset-view" class="bg-slate-50 hover:bg-slate-100 text-slate-700 px-5 py-2 rounded-full border border-slate-200 transition-colors text-sm font-bold shadow-sm">
+            🔄 复位视角
+        </button>
+    </div>
+
+    <!-- 查看设备详情 Modal (图4) -->
+    <div id="device-info-modal" class="fixed inset-0 z-50 hidden bg-slate-900/60 backdrop-blur-sm flex items-center justify-center transition-opacity">
+        <div class="bg-white rounded-2xl shadow-2xl w-[600px] overflow-hidden border border-slate-200">
+            <div class="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
+                <h3 class="text-lg font-bold text-slate-800 flex items-center gap-2">
+                    <svg class="w-5 h-5 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z"></path></svg>
+                    终端设备信息
+                </h3>
+                <button onclick="closeDeviceInfoModal()" class="text-slate-400 hover:text-slate-600">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                </button>
+            </div>
+            <div class="p-6 space-y-6">
+                <!-- 基本信息网格 -->
+                <div class="grid grid-cols-2 gap-y-4 gap-x-6">
+                    <div>
+                        <p class="text-xs text-slate-500 font-bold mb-1">设备名称</p>
+                        <p id="dev-info-name" class="text-sm font-semibold text-slate-800">--</p>
+                    </div>
+                    <div>
+                        <p class="text-xs text-slate-500 font-bold mb-1">设备 ID</p>
+                        <p id="dev-info-id" class="text-sm font-mono text-slate-600 truncate">--</p>
+                    </div>
+                    <div>
+                        <p class="text-xs text-slate-500 font-bold mb-1">运行状态</p>
+                        <p id="dev-info-status" class="text-sm font-bold">--</p>
+                    </div>
+                    <div>
+                        <p class="text-xs text-slate-500 font-bold mb-1">当前电量</p>
+                        <div class="flex items-center gap-2">
+                            <div class="w-16 h-2 bg-slate-200 rounded-full overflow-hidden">
+                                <div id="dev-info-battery-bar" class="h-full bg-green-500 w-0"></div>
+                            </div>
+                            <p id="dev-info-battery-text" class="text-sm font-mono text-slate-600">--</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 硬件传感器数据 -->
+                <div class="bg-slate-50 rounded-xl p-4 border border-slate-100">
+                    <p class="text-xs text-slate-500 font-bold mb-3 border-b border-slate-200 pb-2">实时传感器数据</p>
+                    <div class="grid grid-cols-3 gap-4">
+                        <div>
+                            <p class="text-[10px] text-slate-400 mb-1 uppercase">经度 (Lng)</p>
+                            <p id="dev-info-lng" class="text-sm font-mono text-slate-700">--</p>
+                        </div>
+                        <div>
+                            <p class="text-[10px] text-slate-400 mb-1 uppercase">纬度 (Lat)</p>
+                            <p id="dev-info-lat" class="text-sm font-mono text-slate-700">--</p>
+                        </div>
+                        <div>
+                            <p class="text-[10px] text-slate-400 mb-1 uppercase">朝向 (Angle)</p>
+                            <p id="dev-info-angle" class="text-sm font-mono text-slate-700">--</p>
+                        </div>
+                        <div>
+                            <p class="text-[10px] text-slate-400 mb-1 uppercase">速度 (km/h)</p>
+                            <p id="dev-info-speed" class="text-sm font-mono text-slate-700">--</p>
+                        </div>
+                        <div>
+                            <p class="text-[10px] text-slate-400 mb-1 uppercase">卫星数 (Sats)</p>
+                            <p id="dev-info-sats" class="text-sm font-mono text-slate-700">--</p>
+                        </div>
+                        <div>
+                            <p class="text-[10px] text-slate-400 mb-1 uppercase">最后活跃</p>
+                            <p id="dev-info-active" class="text-sm font-mono text-slate-700">--</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="px-6 py-4 border-t border-slate-100 flex justify-end gap-3 bg-slate-50/50">
+                <button onclick="closeDeviceInfoModal()" class="px-5 py-2 rounded-lg text-sm font-bold text-white bg-blue-600 hover:bg-blue-700 shadow-sm shadow-blue-600/30 transition-colors">关闭</button>
+            </div>
+        </div>
+    </div>
+    <div id="edit-obstacle-modal" class="fixed inset-0 z-50 hidden bg-slate-900/60 backdrop-blur-sm flex items-center justify-center transition-opacity">
+        <div class="bg-white rounded-2xl shadow-2xl w-[500px] overflow-hidden border border-slate-200">
+            <div class="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
+                <h3 class="text-lg font-bold text-slate-800" id="edit-modal-title">编辑地图信息</h3>
+                <button onclick="closeEditObstacleModal()" class="text-slate-400 hover:text-slate-600">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                </button>
+            </div>
+            <div class="p-6 space-y-4">
+                <input type="hidden" id="edit-obs-id">
+                <input type="hidden" id="edit-obs-type">
+                
+                <!-- Image Upload Section -->
+                <div id="edit-obs-images-container" class="flex items-center gap-4 mb-4 overflow-x-auto pb-2">
+                    <div id="edit-obs-images-list" class="flex gap-2"></div>
+                    <label class="w-20 h-20 flex flex-col items-center justify-center bg-slate-50 border-2 border-dashed border-slate-300 rounded-lg text-slate-400 cursor-pointer hover:bg-slate-100 hover:border-blue-400 hover:text-blue-500 transition-colors shrink-0">
+                        <i class="fas fa-plus text-xl mb-1"></i>
+                        <span class="text-[10px] font-medium">Add Photo</span>
+                        <input type="file" id="edit-obs-image-upload" class="hidden" accept="image/*" onchange="handleImageUpload(event)">
+                    </label>
+                </div>
+
+                <div>
+                    <label class="block text-xs font-bold text-slate-500 mb-1">名称 <span class="text-red-500">*</span></label>
+                    <input type="text" id="edit-obs-title" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                </div>
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-xs font-bold text-slate-500 mb-1">经度 (Lng) <span class="text-red-500">*</span></label>
+                        <input type="number" step="0.000001" id="edit-obs-lng" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-bold text-slate-500 mb-1">纬度 (Lat) <span class="text-red-500">*</span></label>
+                        <input type="number" step="0.000001" id="edit-obs-lat" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                    </div>
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-slate-500 mb-1">详细描述</label>
+                    <textarea id="edit-obs-desc" rows="3" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 resize-none"></textarea>
+                </div>
+            </div>
+            <div class="px-6 py-4 border-t border-slate-100 flex justify-end gap-3 bg-slate-50/50">
+                <button onclick="closeEditObstacleModal()" class="px-4 py-2 rounded-lg text-sm font-bold text-slate-600 hover:bg-slate-200 transition-colors">取消</button>
+                <button onclick="saveObstacleEdit()" class="px-4 py-2 rounded-lg text-sm font-bold text-white bg-blue-600 hover:bg-blue-700 shadow-sm shadow-blue-600/30 transition-colors flex items-center gap-2">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg> 确认保存
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // 定时刷新真实数据 (缩短为 1.5 秒以实现平滑跟随)
+        setInterval(fetchRealTimeData, 1500);
+
+        // ==========================================
+        // 1. 顶部悬浮时钟逻辑
+        // ==========================================
+        function updateClock() {
+            const clockEl = document.getElementById('clock');
+            if (clockEl) {
+                clockEl.innerText = new Date().toLocaleTimeString('zh-CN', { hour12: false });
+            }
+        }
+        setInterval(updateClock, 1000);
+        updateClock();
+
+        // ==========================================
+        // 2. 初始化高德 3D 地图 (WebGL)
+        // ==========================================
+        // 禁用地图容器上的鼠标右键默认菜单，防止 Edge 浏览器手势冲突
+        document.getElementById('map-container').addEventListener('contextmenu', function(e) {
+            e.preventDefault();
+        });
+
+        const initialCenter = [116.397428, 39.90923]; // 北京故宫附近
+        const map = new AMap.Map('map-container', {
+            viewMode: '3D',           // 开启 3D 视图
+            pitch: 60,                // 倾斜角度 (制造纵深感)
+            rotation: 15,             // 旋转角度
+            zoom: 16,                 // 放大级别
+            center: initialCenter,    
+            mapStyle: 'amap://styles/normal', // 默认标准清晰白天主题，配合大屏的亮色磨砂面板
+            buildingAnimation: true,  // 楼块出现时的动画
+            showBuildingBlock: true   // 显示 3D 楼块
+        });
+
+        // 添加 3D 控制罗盘 (隐藏默认样式，使用我们自己的按钮控制)
+        map.addControl(new AMap.ControlBar({
+            showZoomBar: false,
+            showControlButton: false,
+            position: { right: '400px', bottom: '20px' } // 避开右侧面板
+        }));
+
+        // 复位视角按钮
+        document.getElementById('btn-reset-view').addEventListener('click', () => {
+            map.setPitch(60);
+            map.setRotation(15);
+            map.setZoomAndCenter(16, initialCenter);
+        });
+
+        // 切换地图样式功能
+        window.changeMapStyle = function(styleUrl) {
+            map.setMapStyle(styleUrl);
+            // 简单的选中状态高亮
+            document.querySelectorAll('#theme-menu button').forEach(btn => {
+                btn.classList.remove('text-blue-600', 'bg-blue-50');
+                btn.classList.add('text-slate-700');
+            });
+            event.target.classList.remove('text-slate-700');
+            event.target.classList.add('text-blue-600', 'bg-blue-50');
+        };
+
+        // 控制主题下拉菜单显示/隐藏
+        const btnThemeToggle = document.getElementById('btn-theme-toggle');
+        const themeMenu = document.getElementById('theme-menu');
+        btnThemeToggle.addEventListener('click', (e) => {
+            e.stopPropagation();
+            themeMenu.classList.toggle('hidden');
+        });
+        window.closeThemeMenu = function() {
+            themeMenu.classList.add('hidden');
+        };
+        // 点击页面空白处关闭菜单
+        document.addEventListener('click', () => {
+            closeThemeMenu();
+        });
+
+        // ==========================================
+        // 3. 真实障碍物数据加载逻辑
+        // ==========================================
+        let markers = [];
+        let dataLoaded = false;
+
+        const btnHeatmap = document.getElementById('btn-heatmap');
+        btnHeatmap.addEventListener('click', async () => {
+            if(dataLoaded) {
+                // 清除所有 Marker
+                map.remove(markers);
+                markers = [];
+                dataLoaded = false;
+                btnHeatmap.classList.remove('bg-orange-50', 'text-orange-700', 'border-orange-200');
+                btnHeatmap.classList.add('bg-indigo-50', 'text-indigo-700', 'border-indigo-200');
+                btnHeatmap.innerHTML = '📍 加载地图数据';
+                return;
+            }
+
+            try {
+                btnHeatmap.innerHTML = '⏳ 正在加载...';
+                
+                // Fetch both obstacles and shops
+                const [obsRes, shopsRes] = await Promise.all([
+                    fetch('/api/obstacles'),
+                    fetch('/api/shops')
+                ]);
+                
+                if (!obsRes.ok || !shopsRes.ok) throw new Error('网络请求失败');
+                
+                const obstacles = await obsRes.json();
+                const shops = await shopsRes.json();
+                
+                // Add obstacles
+                obstacles.forEach(obs => {
+                    if (obs.lat && obs.lng) {
+                        const marker = new AMap.Marker({
+                            position: new AMap.LngLat(obs.lng, obs.lat),
+                            title: obs.title || '障碍物',
+                            content: `<div class="relative flex items-center justify-center w-8 h-8">
+                                        <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+                                        <span class="relative inline-flex rounded-full h-3 w-3 bg-red-500 shadow-[0_0_8px_rgba(255,0,0,0.8)]"></span>
+                                      </div>`,
+                            offset: new AMap.Pixel(-16, -16)
+                        });
+                        
+                        marker.on('click', () => {
+                            const imagesHtml = (obs.imageUrls && obs.imageUrls.length > 0) 
+                                ? `<div class="flex gap-2 mt-2 overflow-x-auto pb-2">${obs.imageUrls.map(url => `<img src="${url}" class="w-16 h-16 object-cover rounded shadow-sm border border-slate-200">`).join('')}</div>`
+                                : '';
+                                
+                            const infoWindow = new AMap.InfoWindow({
+                                isCustom: true,
+                                content: `
+                                    <div class="bg-white/95 border border-red-200 p-4 rounded-xl text-slate-700 shadow-2xl backdrop-blur-md" style="width: 280px;">
+                                        <div class="flex justify-between items-center mb-2 border-b border-slate-100 pb-2">
+                                            <h3 class="font-bold text-red-500 text-sm">⚠️ ${obs.title || '未知障碍物'}</h3>
+                                            <button onclick="map.clearInfoWindow()" class="text-slate-400 hover:text-slate-600">&times;</button>
+                                        </div>
+                                        <p class="text-xs text-slate-600 mb-2">描述: ${obs.description || '无详细描述'}</p>
+                                        ${imagesHtml}
+                                        <p class="text-[10px] text-slate-400 mb-2 font-mono mt-2">坐标: ${obs.lng.toFixed(5)}, ${obs.lat.toFixed(5)}</p>
+                                        <p class="text-[10px] text-slate-500 text-right mb-3">来自: ${obs.creator || '匿名众包'}</p>
+                                        <div class="border-t border-slate-100 pt-2 flex justify-end">
+                                            <button onclick="openEditObstacleModal('${obs.id}', '${obs.title || ''}', '${obs.description || ''}', ${obs.lng}, ${obs.lat}, 'obstacles')" class="bg-blue-50 hover:bg-blue-100 text-blue-600 px-3 py-1 rounded text-xs font-bold transition-colors flex items-center gap-1">
+                                                <i class="fas fa-edit"></i> 编辑图文
+                                            </button>
+                                        </div>
+                                    </div>
+                                `,
+                                offset: new AMap.Pixel(0, -20)
+                            });
+                            infoWindow.open(map, marker.getPosition());
+                            map.setZoomAndCenter(18, marker.getPosition(), false);
+                        });
+                        markers.push(marker);
+                    }
+                });
+
+                // Add shops
+                shops.forEach(shop => {
+                    if (shop.lat && shop.lng) {
+                        const marker = new AMap.Marker({
+                            position: new AMap.LngLat(shop.lng, shop.lat),
+                            title: shop.title || '店铺',
+                            content: `<div class="relative flex items-center justify-center w-8 h-8">
+                                        <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
+                                        <span class="relative inline-flex rounded-full h-3 w-3 bg-blue-500 shadow-[0_0_8px_rgba(0,0,255,0.8)]"></span>
+                                      </div>`,
+                            offset: new AMap.Pixel(-16, -16)
+                        });
+                        
+                        marker.on('click', () => {
+                            const imagesHtml = (shop.imageUrls && shop.imageUrls.length > 0) 
+                                ? `<div class="flex gap-2 mt-2 overflow-x-auto pb-2">${shop.imageUrls.map(url => `<img src="${url}" class="w-16 h-16 object-cover rounded shadow-sm border border-slate-200">`).join('')}</div>`
+                                : '';
+                                
+                            const infoWindow = new AMap.InfoWindow({
+                                isCustom: true,
+                                content: `
+                                    <div class="bg-white/95 border border-blue-200 p-4 rounded-xl text-slate-700 shadow-2xl backdrop-blur-md" style="width: 280px;">
+                                        <div class="flex justify-between items-center mb-2 border-b border-slate-100 pb-2">
+                                            <h3 class="font-bold text-blue-600 text-sm">🏪 ${shop.title || '未知店铺'}</h3>
+                                            <button onclick="map.clearInfoWindow()" class="text-slate-400 hover:text-slate-600">&times;</button>
+                                        </div>
+                                        <p class="text-xs text-slate-600 mb-2">描述: ${shop.description || '无详细描述'}</p>
+                                        ${imagesHtml}
+                                        <p class="text-[10px] text-slate-400 mb-2 font-mono mt-2">坐标: ${shop.lng.toFixed(5)}, ${shop.lat.toFixed(5)}</p>
+                                        <div class="border-t border-slate-100 pt-2 flex justify-end">
+                                            <button onclick="openEditObstacleModal('${shop.id}', '${shop.title || ''}', '${shop.description || ''}', ${shop.lng}, ${shop.lat}, 'shops')" class="bg-blue-50 hover:bg-blue-100 text-blue-600 px-3 py-1 rounded text-xs font-bold transition-colors flex items-center gap-1">
+                                                <i class="fas fa-edit"></i> 编辑图文
+                                            </button>
+                                        </div>
+                                    </div>
+                                `,
+                                offset: new AMap.Pixel(0, -20)
+                            });
+                            infoWindow.open(map, marker.getPosition());
+                            map.setZoomAndCenter(18, marker.getPosition(), false);
+                        });
+                        markers.push(marker);
+                    }
+                });
+                
+                // 批量添加到地图
+                map.add(markers);
+                dataLoaded = true;
+                
+                if (markers.length > 0) {
+                    map.setFitView(markers, false, [50, 50, 50, 50]);
+                }
+
+                btnHeatmap.classList.add('bg-orange-50', 'text-orange-700', 'border-orange-200');
+                btnHeatmap.classList.remove('bg-indigo-50', 'text-indigo-700', 'border-indigo-200');
+                btnHeatmap.innerHTML = '🚫 隐藏地图数据';
+                
+            } catch (error) {
+                console.error("加载地图数据失败:", error);
+                alert("加载数据失败，请确保后端服务正在运行且拥有数据。");
+                btnHeatmap.innerHTML = '📍 加载地图数据';
+            }
+        });
+
+        // ==========================================
+        // 5. 初始化 ECharts 图表与实时数据拉取
+        // ==========================================
+        let myChartPie = null;
+        let currentGuideFlowMode = null;
+
+        function buildEmptyGuideFlowSnapshot() {
+            const emptyModule = (badge, stage) => ({
+                badge,
+                stage,
+                summary: '等待真实导航数据上报。',
+                statusText: '未触发',
+                statusClass: 'text-slate-500 bg-slate-100',
+                title: '当前暂无导航任务',
+                desc: '请先启动真实导航、上传 GPS 与视频帧，左侧导盲流程才会显示真实状态。',
+                steps: ['等待开始', '等待数据', '等待分析', '等待播报'],
+                activeIndex: -1,
+                metrics: [
+                    { label: '状态', value: '--', tone: 'text-slate-500' },
+                    { label: '数据', value: '--', tone: 'text-slate-500' },
+                    { label: '输出', value: '--', tone: 'text-slate-500' }
+                ],
+                signals: [
+                    ['说明', '当前没有可用的真实导航状态'],
+                    ['来源', '等待设备 GPS / 视频 / 语音事件'],
+                    ['提示', '测试人工接力时，请调用真实志愿者求助接口']
+                ]
+            });
+
+            return {
+                active_mode: 'macro',
+                modules: {
+                    macro: emptyModule('宏观规划', '高德地图宏观路线规划'),
+                    doubao: emptyModule('豆包交互', '豆包多模态视频交互'),
+                    micro: emptyModule('微观导航', '服务器视频帧微观导航决策'),
+                    assist: emptyModule('人工接力', '按需触发的人工求助闭环')
+                }
+            };
+        }
+
+        function hasActiveGuideFlow(snapshot) {
+            if (!snapshot?.modules) return false;
+            return Object.values(snapshot.modules).some(module => {
+                if (!module) return false;
+                if ((module.activeIndex ?? -1) >= 0) return true;
+                const statusText = String(module.statusText || '');
+                return !['未触发', '未启动'].includes(statusText);
+            });
+        }
+
+        function getCurrentGuideFlowSnapshot() {
+            if (currentFollowClientId) {
+                const followed = deviceList.find(d => d.id === currentFollowClientId);
+                if (followed?.guide_flow && hasActiveGuideFlow(followed.guide_flow)) return followed.guide_flow;
+            }
+
+            const onlineActiveFlow = deviceList.find(d => d.status === 'online' && hasActiveGuideFlow(d.guide_flow));
+            if (onlineActiveFlow?.guide_flow) return onlineActiveFlow.guide_flow;
+
+            if (currentFollowClientId) {
+                const followed = deviceList.find(d => d.id === currentFollowClientId);
+                if (followed?.guide_flow) return followed.guide_flow;
+            }
+
+            const onlineWithFlow = deviceList.find(d => d.status === 'online' && d.guide_flow);
+            if (onlineWithFlow?.guide_flow) return onlineWithFlow.guide_flow;
+            return buildEmptyGuideFlowSnapshot();
+        }
+
+        function renderGuideFlowPanel(modeKey, flowSnapshot = null, useSnapshotMode = true) {
+            const snapshot = flowSnapshot || getCurrentGuideFlowSnapshot();
+            const modules = snapshot?.modules || buildEmptyGuideFlowSnapshot().modules;
+            const resolvedModeKey = useSnapshotMode ? (snapshot?.active_mode || modeKey || 'macro') : (modeKey || snapshot?.active_mode || 'macro');
+            const mode = modules[resolvedModeKey] || modules.macro;
+            const badgeEl = document.getElementById('guide-flow-mode-badge');
+            const stageEl = document.getElementById('guide-flow-stage');
+            const summaryEl = document.getElementById('guide-flow-summary');
+            const statusEl = document.getElementById('guide-flow-status');
+            const titleEl = document.getElementById('guide-flow-title');
+            const descEl = document.getElementById('guide-flow-desc');
+            const metricsEl = document.getElementById('guide-flow-metrics');
+            const trackEl = document.getElementById('guide-flow-track');
+            const signalsEl = document.getElementById('guide-flow-signals');
+
+            if (!badgeEl || !stageEl || !summaryEl || !statusEl || !titleEl || !descEl || !metricsEl || !trackEl || !signalsEl) {
+                return;
+            }
+
+            currentGuideFlowMode = resolvedModeKey;
+            badgeEl.textContent = mode.badge;
+            stageEl.textContent = mode.stage;
+            summaryEl.textContent = mode.summary;
+            titleEl.textContent = mode.title;
+            descEl.textContent = mode.desc;
+            statusEl.className = `text-[11px] font-bold px-2.5 py-1 rounded-full ${mode.statusClass}`;
+            statusEl.textContent = mode.statusText;
+
+            trackEl.innerHTML = (mode.steps || []).map((step, idx) => {
+                const cls = mode.activeIndex < 0 ? '' : (idx < mode.activeIndex ? 'done' : idx === mode.activeIndex ? 'active' : '');
+                return `
+                    <div class="flow-node ${cls}">
+                        <div class="flow-node-dot"></div>
+                        <div class="flow-node-label">${step}</div>
+                    </div>
+                `;
+            }).join('');
+
+            metricsEl.innerHTML = (mode.metrics || []).map(metric => `
+                <div class="bg-white/60 rounded-xl border border-white/70 px-3 py-3 shadow-sm">
+                    <div class="text-[10px] uppercase tracking-wide text-slate-400 mb-1">${metric.label}</div>
+                    <div class="text-sm font-bold ${metric.tone}">${metric.value}</div>
+                </div>
+            `).join('');
+
+            signalsEl.innerHTML = (mode.signals || []).map(([label, value]) => `
+                <div class="signal-chip">
+                    <div class="text-[11px] text-slate-400 font-bold mb-1">${label}</div>
+                    <div class="text-sm text-slate-700 leading-6">${value}</div>
+                </div>
+            `).join('');
+
+            document.querySelectorAll('#guide-flow-tabs .flow-tab').forEach(btn => {
+                btn.classList.toggle('active', btn.dataset.mode === resolvedModeKey);
+            });
+        }
+
+        function initGuideFlowPanel() {
+            const tabs = document.querySelectorAll('#guide-flow-tabs .flow-tab');
+            tabs.forEach(btn => {
+                if (btn.dataset.bound === '1') return;
+                btn.dataset.bound = '1';
+                btn.addEventListener('click', () => {
+                    const nextMode = btn.dataset.mode || 'macro';
+                    currentGuideFlowMode = nextMode;
+                    renderGuideFlowPanel(nextMode, getCurrentGuideFlowSnapshot(), false);
+                });
+            });
+            const snapshot = getCurrentGuideFlowSnapshot();
+            const modeKey = currentGuideFlowMode || snapshot?.active_mode || 'macro';
+            currentGuideFlowMode = modeKey;
+            renderGuideFlowPanel(modeKey, snapshot, true);
+        }
+
+        // 【答辩重点展示】：坐标系映射与大屏路线回显
+        // 痛点：硬件 GPS 给的是真实的地球坐标（WGS84），而高德大屏出于安全考虑用的是火星坐标（GCJ02），直接画会发生严重偏移（漂移到河里）。
+        // 原理：我们在前端封装了 WGS84 转 GCJ02 的数学映射算法。
+        // 效果：结合 WebSocket 下发的高德步行路线规划节点（Polyline），利用 WebGL API 在 3D 地图上绘制出了带方向的折线轨迹，实现了毫秒级的在线设备蓝点追踪与路线回显。
+        function wgs84_to_gcj02(lng, lat) {
+            var a = 6378245.0;
+            var ee = 0.00669342162296594323;
+            var pi = 3.14159265358979324;
+            
+            function transformLat(x, y) {
+                var ret = -100.0 + 2.0 * x + 3.0 * y + 0.2 * y * y + 0.1 * x * y + 0.2 * Math.sqrt(Math.abs(x));
+                ret += (20.0 * Math.sin(6.0 * x * pi) + 20.0 * Math.sin(2.0 * x * pi)) * 2.0 / 3.0;
+                ret += (20.0 * Math.sin(y * pi) + 40.0 * Math.sin(y / 3.0 * pi)) * 2.0 / 3.0;
+                ret += (160.0 * Math.sin(y / 12.0 * pi) + 320 * Math.sin(y * pi / 30.0)) * 2.0 / 3.0;
+                return ret;
+            }
+            function transformLon(x, y) {
+                var ret = 300.0 + x + 2.0 * y + 0.1 * x * x + 0.1 * x * y + 0.1 * Math.sqrt(Math.abs(x));
+                ret += (20.0 * Math.sin(6.0 * x * pi) + 20.0 * Math.sin(2.0 * x * pi)) * 2.0 / 3.0;
+                ret += (20.0 * Math.sin(x * pi) + 40.0 * Math.sin(x / 3.0 * pi)) * 2.0 / 3.0;
+                ret += (150.0 * Math.sin(x / 12.0 * pi) + 300.0 * Math.sin(x / 30.0 * pi)) * 2.0 / 3.0;
+                return ret;
+            }
+            if (lng < 72.004 || lng > 137.8347 || lat < 0.8293 || lat > 55.8271) {
+                return [lng, lat];
+            }
+            var dLat = transformLat(lng - 105.0, lat - 35.0);
+            var dLon = transformLon(lng - 105.0, lat - 35.0);
+            var radLat = lat / 180.0 * pi;
+            var magic = Math.sin(radLat);
+            magic = 1 - ee * magic * magic;
+            var sqrtMagic = Math.sqrt(magic);
+            dLat = (dLat * 180.0) / ((a * (1 - ee)) / (magic * sqrtMagic) * pi);
+            dLon = (dLon * 180.0) / (a / sqrtMagic * Math.cos(radLat) * pi);
+            var mgLat = lat + dLat;
+            var mgLon = lng + dLon;
+            return [mgLon, mgLat];
+        }
+
+        setTimeout(() => {
+            initGuideFlowPanel();
+
+            // 饼图
+            const chartPieDom = document.getElementById('chart-pie');
+            myChartPie = echarts.init(chartPieDom);
+            
+            myChartPie.setOption({
+                backgroundColor: 'transparent',
+                tooltip: { trigger: 'item', backgroundColor: 'rgba(255, 255, 255, 0.95)', borderColor: '#E2E8F0', textStyle: { color: '#334155' } },
+                legend: {
+                    orient: 'horizontal',
+                    bottom: '0%',
+                    textStyle: { color: '#64748B', fontSize: 10 },
+                    itemWidth: 10,
+                    itemHeight: 10
+                },
+                series: [
+                    {
+                        name: '设备状态',
+                        type: 'pie',
+                        radius: ['40%', '70%'],
+                        center: ['50%', '45%'],
+                        avoidLabelOverlap: false,
+                        itemStyle: {
+                            borderRadius: 5,
+                            borderColor: '#FFFFFF',
+                            borderWidth: 2
+                        },
+                        label: { show: false, position: 'center' },
+                        emphasis: {
+                            label: { show: true, fontSize: '14', fontWeight: 'bold', color: '#334155' },
+                            itemStyle: {
+                                shadowBlur: 10,
+                                shadowOffsetX: 0,
+                                shadowColor: 'rgba(0, 0, 0, 0.1)'
+                            }
+                        },
+                        labelLine: { show: false },
+                        data: [
+                            { value: 0, name: '正常在线', itemStyle: { color: '#10B981' } },
+                            { value: 0, name: '低电量预警', itemStyle: { color: '#F59E0B' } },
+                            { value: 0, name: '网络异常', itemStyle: { color: '#EF4444' } }
+                        ]
+                    }
+                ]
+            });
+            
+            // 响应窗口大小变化
+            window.addEventListener('resize', () => {
+                myChartPie.resize();
+            });
+
+            // 初始化后立即拉取一次真实数据
+            fetchRealTimeData();
+        }, 500);
+
+        // 真实数据拉取逻辑
+        let deviceMarkers = [];
+        let deviceRoutes = {}; // 保存每个设备当前的路线和起终点 {polyline: ..., start: ..., end: ...}
+
+        function drawRouteForDevice(clientId, route, navStatus) {
+            if (deviceRoutes[clientId]) {
+                map.remove([deviceRoutes[clientId].polyline, deviceRoutes[clientId].start, deviceRoutes[clientId].end]);
+                delete deviceRoutes[clientId];
+            }
+            if (!route || route.length === 0) {
+                return;
+            }
+            const gcjRoute = route;
+            const statusText = String(navStatus || "").toUpperCase();
+            const polyline = new AMap.Polyline({
+                path: gcjRoute,
+                strokeColor: statusText === "SIMULATED" ? "#22C55E" : "#2563EB",
+                strokeWeight: 8,
+                strokeOpacity: 0.9,
+                showDir: true,
+                zIndex: 50
+            });
+            const startMarker = new AMap.Marker({
+                position: gcjRoute[0],
+                content: `<div class="bg-green-500 text-white text-xs px-2 py-1 rounded-full shadow-lg border-2 border-white">起点</div>`,
+                offset: new AMap.Pixel(-15, -15),
+                zIndex: 100
+            });
+            const endMarker = new AMap.Marker({
+                position: gcjRoute[gcjRoute.length - 1],
+                content: `<div class="bg-red-500 text-white text-xs px-2 py-1 rounded-full shadow-lg border-2 border-white">终点</div>`,
+                offset: new AMap.Pixel(-15, -15),
+                zIndex: 100
+            });
+            map.add([polyline, startMarker, endMarker]);
+            deviceRoutes[clientId] = { polyline: polyline, start: startMarker, end: endMarker };
+            // 仅在未启用设备跟随时自动适配路线，避免与实时跟随产生“跳点”观感
+            if (!isFollowingDevice) {
+                map.setFitView([polyline]);
+            }
+            console.log(`[Map] 绘制了设备 ${clientId} 的路线 (${statusText || "UNKNOWN"})`);
+        }
+
+        // 接收 WebSocket 消息，例如接收设备路线
+        const wsUrl = `ws://${window.location.host}/ws/stream`;
+        const ws = new WebSocket(wsUrl);
+        
+        ws.onmessage = function(event) {
+            try {
+                const data = JSON.parse(event.data);
+                
+                // 处理路线更新
+                if (data.type === "route_update") {
+                    const clientId = data.client_id;
+                    const route = data.route;
+                    const navStatus = String(data.nav_status || "").toUpperCase();
+                    // 如果后端传来的路线为空，说明导航结束
+                    if (!route || route.length === 0) {
+                        clearDeviceRoute(clientId);
+                        console.log(`[Map] 设备 ${clientId} 导航结束，已清除路线。`);
+                        return;
+                    }
+                    drawRouteForDevice(clientId, route, navStatus);
+                    
+                    // 手动触发一次设备列表更新以显示刚上线的设备
+                    fetchRealTimeData();
+                }
+            } catch(e) {
+                console.error("WebSocket message parse error:", e);
+            }
+        };
+
+        function setSystemStatus(isOnline) {
+            const dot = document.getElementById('system-status-dot');
+            const text = document.getElementById('system-status-text');
+            if (!dot || !text) return;
+            if (isOnline) {
+                dot.className = 'w-2 h-2 rounded-full bg-green-500 animate-pulse';
+                text.className = 'text-green-600 font-mono';
+                text.textContent = '设备在线';
+            } else {
+                dot.className = 'w-2 h-2 rounded-full bg-slate-400';
+                text.className = 'text-slate-500 font-mono';
+                text.textContent = '等待设备';
+            }
+        }
+
+        function renderCrowdsourceFeedFromObstacles(obstacles) {
+            const feed = document.getElementById('crowdsource-feed');
+            if (!feed) return;
+            const list = Array.isArray(obstacles) ? obstacles : [];
+            if (list.length === 0) {
+                feed.innerHTML = '<li class="text-xs text-slate-500 bg-white/50 p-3 rounded-lg border border-white/60">暂无实时路障数据</li>';
+                return;
+            }
+            const sorted = list.slice().sort((a, b) => Number(b.created_at || b.createdAt || 0) - Number(a.created_at || a.createdAt || 0));
+            const top = sorted.slice(0, 12);
+            feed.innerHTML = top.map(item => {
+                const title = (item.title || item.label || '路障').toString();
+                const desc = (item.description || item.desc || item.reason || '').toString();
+                const who = (item.reporter_name || item.reporter || item.source || '边缘端').toString();
+                const where = (item.location || item.address || '').toString();
+                const severity = (item.severity || '').toString().toLowerCase();
+                const border = severity.includes('high') || severity.includes('严重') ? 'border-red-500' : (severity.includes('medium') ? 'border-orange-500' : 'border-yellow-500');
+                return `
+                <li class="flex flex-col text-sm bg-white/60 p-2.5 rounded-lg border-l-4 ${border} hover:bg-white transition-colors cursor-pointer shadow-sm">
+                    <div class="flex justify-between items-center mb-1">
+                        <span class="text-slate-800 font-bold text-xs">🚧 ${title}</span>
+                        <span class="text-slate-400 text-[10px]"></span>
+                    </div>
+                    <span class="text-slate-600 text-xs">${who}${where ? '：' + where : ''}${desc ? ' ' + desc : ''}</span>
+                </li>
+                `;
+            }).join('');
+        }
+
+        let isFollowingDevice = false; // 是否开启地图跟随模式
+        let currentFollowClientId = null; // 当前跟随的设备ID
+        let deviceList = []; // 保存从后端获取的设备列表数据
+
+        function clearDeviceRoute(clientId) {
+            if (!deviceRoutes[clientId]) return;
+            map.remove([deviceRoutes[clientId].polyline, deviceRoutes[clientId].start, deviceRoutes[clientId].end]);
+            delete deviceRoutes[clientId];
+        }
+
+        function reconcileDeviceRoutes(devices) {
+            const activeRouteIds = new Set();
+            (devices || []).forEach(d => {
+                const payload = d.route_payload || {};
+                const route = Array.isArray(payload.route) ? payload.route : [];
+                if (route.length > 0 && d.id) {
+                    activeRouteIds.add(d.id);
+                    drawRouteForDevice(d.id, route, payload.nav_status);
+                }
+            });
+            Object.keys(deviceRoutes).forEach(clientId => {
+                if (!activeRouteIds.has(clientId)) {
+                    console.log(`[Map] 清理残留路线: ${clientId}`);
+                    clearDeviceRoute(clientId);
+                }
+            });
+        }
+
+        async function fetchRealTimeData() {
+            try {
+                // 1. 获取设备数据 (用于在线终端数、饼图状态、设备标记)
+                const deviceRes = await fetch('/api/admin/devices');
+                if (deviceRes.ok) {
+                    const deviceData = await deviceRes.json();
+                    if (deviceData.success && deviceData.devices) {
+                        const devices = deviceData.devices;
+                        deviceList = devices; // 更新全局设备列表
+                        reconcileDeviceRoutes(devices);
+                        const flowSnapshot = getCurrentGuideFlowSnapshot();
+                        currentGuideFlowMode = flowSnapshot?.active_mode || currentGuideFlowMode || 'macro';
+                        renderGuideFlowPanel(currentGuideFlowMode, flowSnapshot, true);
+                        
+                        // 更新下拉框选项
+                        updateDeviceSelector();
+                        
+                        // 统计在线设备
+                        const activeUsers = devices.filter(d => d.status === 'online').length;
+                        document.getElementById('stat-active-users').innerText = activeUsers;
+                        setSystemStatus(activeUsers > 0);
+
+                        // 统计饼图状态 (简单模拟：电池<20算低电量，offline算网络异常，其他算正常)
+                        let normalCount = 0;
+                        let lowBatteryCount = 0;
+                        let offlineCount = 0;
+
+                        // 先清除旧的设备标记
+                        if (deviceMarkers.length > 0) {
+                            map.remove(deviceMarkers);
+                            deviceMarkers = [];
+                        }
+
+                        devices.forEach(d => {
+                            if (d.status === 'offline' || d.status === 'inactive') {
+                                offlineCount++;
+                            } else if (d.battery !== null && d.battery < 20) {
+                                lowBatteryCount++;
+                            } else {
+                                normalCount++;
+                            }
+
+                            // 渲染设备标记到地图 (如果在线且有经纬度)
+                            if (d.status === 'online' && d.lat && d.lng) {
+                                // 后端/客户端已统一上传 GCJ02，直接渲染
+                                const gcjLng = d.lng;
+                                const gcjLat = d.lat;
+
+                                const marker = new AMap.Marker({
+                                    position: new AMap.LngLat(gcjLng, gcjLat),
+                                    title: d.name || d.id,
+                                    content: `<div class="relative flex items-center justify-center w-20 h-20 cursor-pointer group">
+                                                <!-- 平滑发散的光晕 (类似百度/高德地图原生定位点) -->
+                                                <div class="absolute inset-0 bg-blue-500 rounded-full opacity-20 animate-[ping_2s_cubic-bezier(0,0,0.2,1)_infinite]"></div>
+                                                <div class="absolute inset-3 bg-blue-500 rounded-full opacity-25"></div>
+                                                
+                                                <!-- 清晰的白色导航圆盘底座 -->
+                                                <div class="relative bg-white rounded-full w-11 h-11 flex items-center justify-center shadow-[0_6px_16px_rgba(59,130,246,0.45)] z-10 border-2 border-blue-100 transition-transform duration-300 group-hover:scale-110">
+                                                    <!-- 更明显的蓝色导航箭头，使用设备的实时真实角度 -->
+                                                    <svg class="w-7 h-7 text-blue-600 drop-shadow-sm" style="transform: rotate(${d.angle || 0}deg);" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2L22 20L12 17L2 20L12 2Z"></path></svg>
+                                                </div>
+
+                                                <div class="absolute -bottom-1 left-1/2 -translate-x-1/2 px-2 py-0.5 bg-blue-600/90 text-white text-[10px] font-bold rounded-full shadow z-20 whitespace-nowrap">
+                                                    导航中
+                                                </div>
+                                              </div>`,
+                                    offset: new AMap.Pixel(-40, -40),
+                                    zIndex: 220
+                                });
+
+                                marker.on('click', () => {
+                                    openDeviceInfoModal(d);
+                                    // 点击设备后，开启视角跟随模式
+                                    isFollowingDevice = true;
+                                    currentFollowClientId = d.id;
+                                    console.log(`[Map] 已开启地图跟随，目标设备: ${d.id}`);
+                                });
+
+                                deviceMarkers.push(marker);
+
+                                // 如果当前正处于跟随模式，且这个标记就是我们要跟随的设备，则移动地图中心点并放大
+                                if (isFollowingDevice && currentFollowClientId === d.id) {
+                                    map.panTo([gcjLng, gcjLat]);
+                                    
+                                    // 平滑缩放到更微观的级别 (例如 19 或 20)
+                                    const currentZoom = map.getZoom();
+                                    if (currentZoom < 19) {
+                                        map.setZoomAndCenter(19, [gcjLng, gcjLat], false, 800); // 800ms 平滑动画
+                                    }
+                                }
+                            }
+                        });
+
+                        if (deviceMarkers.length > 0) {
+                            map.add(deviceMarkers);
+                        }
+
+                        // 更新饼图
+                        if (myChartPie) {
+                            myChartPie.setOption({
+                                series: [{
+                                    data: [
+                                        { value: normalCount, name: '正常在线', itemStyle: { color: '#10B981' } },
+                                        { value: lowBatteryCount, name: '低电量预警', itemStyle: { color: '#F59E0B' } },
+                                        { value: offlineCount, name: '网络异常/离线', itemStyle: { color: '#EF4444' } }
+                                    ]
+                                }]
+                            });
+                        }
+                    } else {
+                        deviceList = [];
+                        document.getElementById('stat-active-users').innerText = '0';
+                        setSystemStatus(false);
+                    }
+                } else {
+                    deviceList = [];
+                    document.getElementById('stat-active-users').innerText = '0';
+                    setSystemStatus(false);
+                }
+
+                // 2. 获取障碍物数据 (用于众包障碍点数)
+                const obsRes = await fetch('/api/obstacles');
+                if (obsRes.ok) {
+                    const obsData = await obsRes.json();
+                    document.getElementById('stat-obstacles').innerText = obsData.length;
+                    renderCrowdsourceFeedFromObstacles(obsData);
+                } else {
+                    document.getElementById('stat-obstacles').innerText = '0';
+                    renderCrowdsourceFeedFromObstacles([]);
+                }
+            } catch (error) {
+                console.error("Failed to fetch real-time data:", error);
+                document.getElementById('stat-active-users').innerText = '0';
+                document.getElementById('stat-obstacles').innerText = '0';
+                setSystemStatus(false);
+                renderCrowdsourceFeedFromObstacles([]);
+            }
+        }
+
+        // 监听地图拖拽事件：用户手动拖拽地图时，取消自动跟随模式
+        map.on('dragstart', () => {
+            if (isFollowingDevice) {
+                isFollowingDevice = false;
+                currentFollowClientId = null;
+                console.log("[Map] 用户手动拖拽地图，已取消设备视角跟随");
+                
+                // 重置下拉框为全部设备
+                const selector = document.getElementById('monitor-device-selector');
+                if (selector) selector.value = '';
+            }
+        });
+
+        // ==========================================
+        // 5.5 新增设备选择器交互逻辑
+        // ==========================================
+        function updateDeviceSelector() {
+            const selector = document.getElementById('monitor-device-selector');
+            if (!selector) return;
+
+            // 保存当前选中的值
+            const currentValue = selector.value;
+            
+            let optionsHtml = '<option value="">全部设备/全局监控 (默认)</option>';
+            
+            deviceList.forEach(d => {
+                const isOnline = d.status === 'online';
+                const statusIcon = isOnline ? '🟢' : '🔴';
+                const statusText = isOnline ? '在线' : '离线';
+                optionsHtml += `<option value="${d.id}" ${d.id === currentValue ? 'selected' : ''}>
+                    ${statusIcon} ${d.name || d.id} (${statusText})
+                </option>`;
+            });
+
+            selector.innerHTML = optionsHtml;
+        }
+
+        window.handleDeviceSelect = function(deviceId) {
+            if (!deviceId) {
+                // 选择全部设备，取消跟随，恢复默认全局视角
+                isFollowingDevice = false;
+                currentFollowClientId = null;
+                currentGuideFlowMode = null;
+                initGuideFlowPanel();
+                map.setPitch(60);
+                map.setRotation(15);
+                map.setZoomAndCenter(16, initialCenter);
+                return;
+            }
+
+            // 找到选中的设备
+            const device = deviceList.find(d => d.id === deviceId);
+            if (device && device.lat && device.lng) {
+                // 开启视角跟随
+                isFollowingDevice = true;
+                currentFollowClientId = device.id;
+                currentGuideFlowMode = device.guide_flow?.active_mode || currentGuideFlowMode || 'macro';
+                renderGuideFlowPanel(currentGuideFlowMode, device.guide_flow || getCurrentGuideFlowSnapshot(), true);
+                
+                // 立即移动视角
+                const gcjLng = device.lng;
+                const gcjLat = device.lat;
+                map.setZoomAndCenter(19, [gcjLng, gcjLat], false, 800);
+                
+                // 可选：打开设备详情面板
+                // openDeviceInfoModal(device);
+            } else {
+                alert('该设备当前无坐标数据或已离线');
+                // 恢复下拉框选项
+                document.getElementById('monitor-device-selector').value = currentFollowClientId || '';
+            }
+        };
+
+        window.refreshDeviceList = function() {
+            fetchRealTimeData();
+        };
+
+        // ==========================================
+        // 6. 面板收起/展开交互逻辑 (全局与局部控制)
+        // ==========================================
+        const leftPanel = document.getElementById('left-panel');
+        const rightPanel = document.getElementById('right-panel');
+        const btnToggleLeft = document.getElementById('btn-toggle-left');
+        const btnToggleRight = document.getElementById('btn-toggle-right');
+        const iconLeft = document.getElementById('icon-left');
+        const iconRight = document.getElementById('icon-right');
+        
+        const btnToggleAll = document.getElementById('btn-toggle-all');
+        const iconToggleAll = document.getElementById('icon-toggle-all');
+        const textToggleAll = document.getElementById('text-toggle-all');
+        
+        let leftPanelOpen = true;
+        let rightPanelOpen = true;
+        let allPanelsOpen = true;
+
+        // 更新全局按钮状态
+        function updateGlobalToggleState() {
+            if (!leftPanelOpen && !rightPanelOpen) {
+                allPanelsOpen = false;
+                textToggleAll.innerText = '展开面板';
+                iconToggleAll.classList.add('rotate-90');
+                btnToggleAll.classList.replace('text-blue-600', 'text-slate-500');
+            } else {
+                allPanelsOpen = true;
+                textToggleAll.innerText = '收起面板';
+                iconToggleAll.classList.remove('rotate-90');
+                btnToggleAll.classList.replace('text-slate-500', 'text-blue-600');
+            }
+        }
+
+        // 单独控制左侧面板
+        function toggleLeftPanel(forceState) {
+            leftPanelOpen = forceState !== undefined ? forceState : !leftPanelOpen;
+            if (leftPanelOpen) {
+                leftPanel.style.transform = 'translateX(0)';
+                iconLeft.style.transform = 'rotate(0deg)';
+            } else {
+                leftPanel.style.transform = 'translateX(calc(-100% - 1.5rem))';
+                iconLeft.style.transform = 'rotate(180deg)';
+            }
+            if (forceState === undefined) updateGlobalToggleState();
+        }
+
+        // 单独控制右侧面板
+        function toggleRightPanel(forceState) {
+            rightPanelOpen = forceState !== undefined ? forceState : !rightPanelOpen;
+            if (rightPanelOpen) {
+                rightPanel.style.transform = 'translateX(0)';
+                iconRight.style.transform = 'rotate(0deg)';
+            } else {
+                rightPanel.style.transform = 'translateX(calc(100% + 1.5rem))';
+                iconRight.style.transform = 'rotate(180deg)';
+            }
+            if (forceState === undefined) updateGlobalToggleState();
+        }
+
+        // 全局控制两侧面板
+        function toggleAllPanels() {
+            allPanelsOpen = !allPanelsOpen;
+            toggleLeftPanel(allPanelsOpen);
+            toggleRightPanel(allPanelsOpen);
+            updateGlobalToggleState();
+        }
+
+        btnToggleLeft.addEventListener('click', () => toggleLeftPanel());
+        btnToggleRight.addEventListener('click', () => toggleRightPanel());
+        btnToggleAll.addEventListener('click', () => toggleAllPanels());
+
+        // ==========================================
+        // 7. 障碍物/店铺编辑逻辑
+        // ==========================================
+        const editModal = document.getElementById('edit-obstacle-modal');
+        let currentItemData = null; // Store current item data including imageUrls
+        
+        window.openEditObstacleModal = async function(id, title, desc, lng, lat, type) {
+            document.getElementById('edit-obs-id').value = id;
+            document.getElementById('edit-obs-type').value = type;
+            document.getElementById('edit-obs-title').value = title;
+            document.getElementById('edit-obs-desc').value = desc;
+            document.getElementById('edit-obs-lng').value = lng;
+            document.getElementById('edit-obs-lat').value = lat;
+            
+            document.getElementById('edit-modal-title').innerText = type === 'obstacles' ? '编辑障碍物' : '编辑店铺';
+            
+            // Find current item from map markers data if possible or refetch
+            try {
+                const res = await fetch(`/api/${type}`);
+                const data = await res.json();
+                currentItemData = data.find(item => item.id === id) || { imageUrls: [] };
+                renderImagesList();
+            } catch(e) {
+                console.error(e);
+                currentItemData = { imageUrls: [] };
+                renderImagesList();
+            }
+            
+            editModal.classList.remove('hidden');
+        };
+        
+        function renderImagesList() {
+            const listEl = document.getElementById('edit-obs-images-list');
+            if(!currentItemData || !currentItemData.imageUrls) {
+                listEl.innerHTML = '';
+                return;
+            }
+            listEl.innerHTML = currentItemData.imageUrls.map(url => 
+                `<img src="${url}" class="w-20 h-20 object-cover rounded-lg border border-slate-200 shadow-sm shrink-0">`
+            ).join('');
+        }
+
+        window.handleImageUpload = async function(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            
+            const id = document.getElementById('edit-obs-id').value;
+            const type = document.getElementById('edit-obs-type').value;
+            
+            const formData = new FormData();
+            formData.append('image', file);
+            
+            try {
+                const res = await fetch(`/api/${type}/${id}/image`, {
+                    method: 'POST',
+                    body: formData
+                });
+                const data = await res.json();
+                if (data.status === 'success' || data.success || data.imageUrl) {
+                    if(!currentItemData.imageUrls) currentItemData.imageUrls = [];
+                    currentItemData.imageUrls.push(data.imageUrl);
+                    renderImagesList();
+                } else {
+                    alert('上传失败: ' + data.message);
+                }
+            } catch(e) {
+                alert('上传出错: ' + e.message);
+            }
+        };
+
+        window.closeEditObstacleModal = function() {
+            editModal.classList.add('hidden');
+        };
+
+        window.saveObstacleEdit = async function() {
+            const id = document.getElementById('edit-obs-id').value;
+            const type = document.getElementById('edit-obs-type').value;
+            const title = document.getElementById('edit-obs-title').value;
+            const desc = document.getElementById('edit-obs-desc').value;
+            const lng = parseFloat(document.getElementById('edit-obs-lng').value);
+            const lat = parseFloat(document.getElementById('edit-obs-lat').value);
+
+            if (!title || isNaN(lng) || isNaN(lat)) {
+                alert('请填写必填项（名称、经度、纬度）');
+                return;
+            }
+
+            try {
+                const payload = {
+                    id: id,
+                    title: title,
+                    description: desc,
+                    lng: lng,
+                    lat: lat,
+                    imageUrls: currentItemData.imageUrls
+                };
+
+                const res = await fetch(`/api/${type}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+
+                if (res.ok) {
+                    alert('保存成功！');
+                    closeEditObstacleModal();
+                    map.clearInfoWindow();
+                    if (dataLoaded) {
+                        document.getElementById('btn-heatmap').click(); 
+                        setTimeout(() => document.getElementById('btn-heatmap').click(), 300); 
+                    }
+                } else {
+                    alert('保存失败！');
+                }
+            } catch (err) {
+                console.error(err);
+                alert('网络错误！');
+            }
+        };
+
+        // ==========================================
+        // 8. 设备信息弹窗逻辑
+        // ==========================================
+        const deviceInfoModal = document.getElementById('device-info-modal');
+
+        window.openDeviceInfoModal = function(device) {
+            document.getElementById('dev-info-name').innerText = device.name || '盲人终端';
+            document.getElementById('dev-info-id').innerText = device.id;
+            
+            const statusEl = document.getElementById('dev-info-status');
+            if (device.status === 'online') {
+                statusEl.innerText = '● 在线';
+                statusEl.className = 'text-sm font-bold text-green-500';
+            } else {
+                statusEl.innerText = '○ 离线/异常';
+                statusEl.className = 'text-sm font-bold text-red-500';
+            }
+
+            const battery = device.battery !== undefined && device.battery !== null ? device.battery : 100;
+            document.getElementById('dev-info-battery-text').innerText = battery + '%';
+            const batteryBar = document.getElementById('dev-info-battery-bar');
+            batteryBar.style.width = battery + '%';
+            batteryBar.className = 'h-full ' + (battery > 20 ? 'bg-green-500' : 'bg-red-500');
+
+            document.getElementById('dev-info-lng').innerText = device.lng ? device.lng.toFixed(6) : 'N/A';
+            document.getElementById('dev-info-lat').innerText = device.lat ? device.lat.toFixed(6) : 'N/A';
+            document.getElementById('dev-info-angle').innerText = device.angle ? device.angle + '°' : '0°';
+            document.getElementById('dev-info-speed').innerText = device.speed ? device.speed.toFixed(1) : '0.0';
+            document.getElementById('dev-info-sats').innerText = device.satellites ? device.satellites : '12';
+            document.getElementById('dev-info-active').innerText = device.lastActive ? new Date(device.lastActive).toLocaleTimeString() : '刚刚';
+
+            deviceInfoModal.classList.remove('hidden');
+        };
+
+        window.closeDeviceInfoModal = function() {
+            deviceInfoModal.classList.add('hidden');
+        };
+
+    </script>
+</body>
+</html>

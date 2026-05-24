@@ -1,0 +1,14 @@
+opencv-python-headless
+websockets
+numpy
+pyaudio
+python-socketio[client]
+aiortc
+av
+requests
+pynmea2
+pyttsx3
+ultralytics
+openvino
+edge-tts
+pygame

@@ -1,0 +1,2565 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OmniVision Admin</title>
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <script type="text/javascript">
+        window._AMapSecurityConfig = {
+            securityJsCode: '4f72d4e8fe05bbbcb2b685a0a39b9da6',
+        }
+    </script>
+    <script src="https://webapi.amap.com/maps?v=1.4.15&key=539153aae5fa1421a5d195af77e65e17&plugin=AMap.Geocoder"></script>
+    <style>
+        body { background-color: #f3f4f6; color: #1f2937; font-family: 'Inter', sans-serif; }
+        .nav-item {
+            transition: all 0.2s;
+            cursor: pointer;
+        }
+        .nav-item:hover, .nav-item.active {
+            background: rgba(59, 130, 246, 0.1);
+            color: #2563eb;
+            border-right: 3px solid #2563eb;
+        }
+        .card {
+            background: #ffffff;
+            border-radius: 1rem;
+            box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06);
+            border: 1px solid #f3f4f6;
+        }
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: #f3f4f6; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef, useMemo } = React;
+            const STATIC_VERSION = '20260417-3';
+
+        const RouteMemoryMap = ({ lat, lng, alias }) => {
+            const mapRef = useRef(null);
+
+            useEffect(() => {
+                if (!window.AMap || !mapRef.current) return;
+                
+                // Init Map
+                const map = new window.AMap.Map(mapRef.current, {
+                    resizeEnable: true,
+                    zoom: 16
+                });
+
+                // Directly use the coordinates, assuming they are GCJ02. Removing WGS84->GCJ02 conversion to prevent offset.
+                const lngLat = new window.AMap.LngLat(lng, lat);
+                map.setCenter(lngLat);
+                
+                // Create custom marker with alias label
+                const markerContent = `
+                    <div style="position: relative; display: flex; flex-direction: column; items-center;">
+                        <div style="background-color: white; color: #4B5563; font-weight: bold; font-size: 12px; padding: 4px 10px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); border: 1px solid #E5E7EB; white-space: nowrap; margin-bottom: 5px; text-align: center;">
+                            ${alias}
+                        </div>
+                        <div style="width: 24px; height: 24px; background-color: #EF4444; border-radius: 50%; border: 3px solid white; box-shadow: 0 2px 4px rgba(0,0,0,0.2); margin: 0 auto;"></div>
+                    </div>
+                `;
+                
+                new window.AMap.Marker({
+                    position: lngLat,
+                    content: markerContent,
+                    offset: new window.AMap.Pixel(-12, -45),
+                    map: map
+                });
+
+                return () => {
+                    if (map && map.destroy) {
+                        map.destroy();
+                    }
+                };
+            }, [lat, lng, alias]);
+
+            return <div ref={mapRef} style={{ width: '100%', height: '100%' }}></div>;
+        };
+
+        const DataMapView = ({ data, type, searchTerm, onMarkerClick }) => {
+            const mapRef = useRef(null);
+            const mapInstanceRef = useRef(null);
+            const markersRef = useRef([]);
+
+            // 1. Init map once
+            useEffect(() => {
+                if (!window.AMap || !mapRef.current) return;
+                
+                const map = new window.AMap.Map(mapRef.current, {
+                    resizeEnable: true,
+                    zoom: 12,
+                    center: [116.397428, 39.90923] // Default to Beijing
+                });
+                
+                mapInstanceRef.current = map;
+                
+                return () => {
+                    if (mapInstanceRef.current) {
+                        mapInstanceRef.current.destroy();
+                        mapInstanceRef.current = null;
+                    }
+                };
+            }, []);
+
+            // 2. Handle markers and search
+            useEffect(() => {
+                const map = mapInstanceRef.current;
+                if (!window.AMap || !map) return;
+
+                // Clear old markers
+                markersRef.current.forEach(marker => map.remove(marker));
+                markersRef.current = [];
+
+                // Geocode search term if provided
+                if (searchTerm && searchTerm.trim() !== '') {
+                    window.AMap.plugin('AMap.Geocoder', function() {
+                        const geocoder = new window.AMap.Geocoder();
+                        geocoder.getLocation(searchTerm, (status, result) => {
+                            if (status === 'complete' && result.geocodes.length) {
+                                map.setCenter(result.geocodes[0].location);
+                                map.setZoom(14); // Zoom in when location found
+                            }
+                        });
+                    });
+                }
+
+                // Add markers
+                let validLocations = [];
+
+                data.forEach(item => {
+                    if (item.lng && item.lat) {
+                        const markerType = item.marker_type || (type === 'obstacles' ? 'obstacle' : (type === 'shops' ? 'shop' : 'annotation'));
+                        const colorClass = markerType === 'shop' ? 'bg-blue-500' : 'bg-orange-500';
+                        const iconClass = markerType === 'shop' ? 'fa-store' : 'fa-map-marker-alt';
+
+                        // Removing WGS84 to GCJ02 conversion to prevent map offset
+                        const lngLat = new window.AMap.LngLat(item.lng, item.lat);
+                        validLocations.push(lngLat);
+                        
+                        const content = `
+                            <div class="relative group cursor-pointer" style="pointer-events: auto;">
+                                <div class="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 w-48 bg-white p-3 rounded-xl shadow-xl opacity-0 group-hover:opacity-100 transition-opacity z-50 pointer-events-none border border-gray-100">
+                                    <p class="font-bold text-gray-800 text-sm truncate mb-1">${item.title || '未命名'}</p>
+                                    <p class="text-[10px] text-gray-500 line-clamp-2 leading-relaxed">${item.description || ''}</p>
+                                </div>
+                                <div class="w-8 h-8 rounded-full ${colorClass} text-white flex items-center justify-center shadow-lg border-2 border-white hover:scale-110 transition-transform">
+                                    <i class="fas ${iconClass} text-sm"></i>
+                                </div>
+                            </div>
+                        `;
+                        
+                        const marker = new window.AMap.Marker({
+                            position: lngLat,
+                            content: content,
+                            offset: new window.AMap.Pixel(-16, -32),
+                            map: map,
+                            extData: item,
+                            zIndex: 100
+                        });
+
+                        if (onMarkerClick) {
+                            marker.on('click', () => {
+                                // Zoom and center map
+                                map.setZoomAndCenter(18, lngLat, false);
+                                
+                                // Call edit handler after a short delay to allow zoom animation
+                                setTimeout(() => {
+                                    onMarkerClick(item);
+                                }, 300);
+                            });
+                        }
+
+                        markersRef.current.push(marker);
+                    }
+                });
+
+                // Set initial fit view just once if no search term
+                setTimeout(() => {
+                    if (!searchTerm && markersRef.current.length > 0 && !map._hasFitView) {
+                        map.setFitView(markersRef.current, false, [50, 50, 50, 50]);
+                        map._hasFitView = true;
+                    }
+                }, 200);
+
+            }, [data, type, searchTerm, onMarkerClick]);
+
+            return <div ref={mapRef} className="w-full h-[600px] rounded-2xl overflow-hidden shadow-sm border border-gray-200"></div>;
+        };
+
+        const App = () => {
+            const [activeTab, setActiveTab] = useState('monitor');
+            const [contributions, setContributions] = useState([]);
+            const [obstacles, setObstacles] = useState([]);
+            const [shops, setShops] = useState([]);
+            const [annotations, setAnnotations] = useState([]);
+            const [annotationFilter, setAnnotationFilter] = useState('all');
+            const [selectedAnnotation, setSelectedAnnotation] = useState(null);
+            const [evidenceNote, setEvidenceNote] = useState('社区图文与评论将作为当前标注的 AO 分析输入材料，用于人工复核和后续模型分析。');
+            const [workflowPrompt, setWorkflowPrompt] = useState('请结合标注原始图片、社区补图、补充说明与评论，对当前标注做人工复核导向的 AI 分析，并输出简洁结论。');
+            const [workflowLoading, setWorkflowLoading] = useState(false);
+            const [workflowResult, setWorkflowResult] = useState('');
+            const [workflowError, setWorkflowError] = useState('');
+            const [liveWorkflowSteps, setLiveWorkflowSteps] = useState([]);
+            const [workflowMeta, setWorkflowMeta] = useState(null);
+            const [workflowStepsExpanded, setWorkflowStepsExpanded] = useState(false);
+            const [users, setUsers] = useState([]);
+            const [disputes, setDisputes] = useState([]);
+            const [routeMemories, setRouteMemories] = useState([]);
+            const [serverInfo, setServerInfo] = useState({});
+            const [scheduledAuditInfo, setScheduledAuditInfo] = useState({ enabled: false, scheduled_time: '', last_run_at: '', last_result: null });
+            const [communityRegions, setCommunityRegions] = useState([]);
+            const [selectedCommunityRegion, setSelectedCommunityRegion] = useState('');
+            const [selectedCommunityForum, setSelectedCommunityForum] = useState('');
+            const [selectedDisputeRegion, setSelectedDisputeRegion] = useState('');
+            
+            // Multi-device States
+            const [activeDeviceId, setActiveDeviceId] = useState('');
+            const [showDeviceModal, setShowDeviceModal] = useState(false);
+            const [searchTerm, setSearchTerm] = useState('');
+            const [devices, setDevices] = useState([]);
+            
+            const [disputeRegions, setDisputeRegions] = useState([]);
+            const [editObstacle, setEditObstacle] = useState(null);
+            const [editShop, setEditShop] = useState(null);
+            const [editContribution, setEditContribution] = useState(null);
+            const [editUser, setEditUser] = useState(null);
+            const [expandedComments, setExpandedComments] = useState({});
+            const [viewRouteMemory, setViewRouteMemory] = useState(null);
+            const [routeMemorySearchTerm, setRouteMemorySearchTerm] = useState('');
+            const [highlightedRouteMemoryId, setHighlightedRouteMemoryId] = useState(null);
+            const [latestRouteMemoryEvent, setLatestRouteMemoryEvent] = useState(null);
+
+            const routeMemoryGroups = useMemo(() => {
+                const grouped = {};
+                (routeMemories || []).forEach(mem => {
+                    const deviceKey = mem.device_key || mem.device_id || mem.client_id || mem.user_id || 'unknown_device';
+                    if (!grouped[deviceKey]) {
+                        grouped[deviceKey] = {
+                            deviceKey,
+                            deviceLabel: mem.device_label || mem.device_name || mem.user_id || deviceKey,
+                            userId: mem.user_id || deviceKey,
+                            memories: [],
+                        };
+                    }
+                    grouped[deviceKey].memories.push(mem);
+                });
+                return Object.values(grouped).sort((a, b) => {
+                    if (b.memories.length !== a.memories.length) return b.memories.length - a.memories.length;
+                    return String(a.deviceLabel).localeCompare(String(b.deviceLabel));
+                });
+            }, [routeMemories]);
+
+            const filteredRouteMemoryGroups = useMemo(() => {
+                const keyword = routeMemorySearchTerm.trim().toLowerCase();
+                if (!keyword) return routeMemoryGroups;
+
+                return routeMemoryGroups
+                    .map(group => {
+                        const groupMatched = [
+                            group.deviceKey,
+                            group.deviceLabel,
+                            group.userId,
+                        ].some(v => String(v || '').toLowerCase().includes(keyword));
+
+                        if (groupMatched) return group;
+
+                        const memories = group.memories.filter(mem => {
+                            return [
+                                mem.alias,
+                                mem.device_label,
+                                mem.device_key,
+                                mem.device_id,
+                                mem.client_id,
+                                mem.user_id,
+                                mem.lat,
+                                mem.lng,
+                            ].some(v => String(v || '').toLowerCase().includes(keyword));
+                        });
+
+                        return memories.length > 0 ? { ...group, memories } : null;
+                    })
+                    .filter(Boolean);
+            }, [routeMemoryGroups, routeMemorySearchTerm]);
+
+            const activeDevice = useMemo(() => devices.find(d => d.id === activeDeviceId) || null, [devices, activeDeviceId]);
+            const activeGuideFlow = activeDevice?.guide_flow || null;
+
+            const formatDistance = (value) => {
+                const distance = Number(value);
+                if (!Number.isFinite(distance) || distance < 0) return '--';
+                if (distance >= 1000) return `${(distance / 1000).toFixed(distance >= 10000 ? 0 : 2)} km`;
+                return `${Math.round(distance)} m`;
+            };
+
+            const formatCoordValue = (value) => {
+                const num = Number(value);
+                return Number.isFinite(num) ? num.toFixed(6) : '--';
+            };
+
+            const formatStepInstruction = (step) => {
+                if (!step) return '当前暂无导航步骤';
+                const base = String(step.instruction || step.assistant_action || '').trim();
+                const roadName = String(step.road || '').trim();
+                if (base && roadName && !base.includes(roadName)) {
+                    return `${base}（${roadName}）`;
+                }
+                return base || roadName || '当前暂无导航步骤';
+            };
+            
+            // Search and View Mode States
+            const [dataViewMode, setDataViewMode] = useState('list'); // 'list' or 'map'
+            const [dataSearchTerm, setDataSearchTerm] = useState('');
+            const [currentSearchInput, setCurrentSearchInput] = useState('');
+
+            // Fix closure issue in setInterval
+            const activeIdRef = useRef(activeDeviceId);
+            useEffect(() => { activeIdRef.current = activeDeviceId; }, [activeDeviceId]);
+
+            const handleAvatarUpload = async (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+
+                const formData = new FormData();
+                formData.append('file', file);
+                if (editUser && editUser.id) {
+                    formData.append('user_id', editUser.id);
+                }
+
+                try {
+                    const res = await fetch('/api/admin/upload/avatar', {
+                        method: 'POST',
+                        body: formData
+                    });
+                    const data = await res.json();
+                    if (data.success) {
+                        setEditUser(prev => ({ ...prev, avatar: data.url }));
+                    } else {
+                        alert('Upload failed: ' + data.message);
+                    }
+                } catch (err) {
+                    alert('Upload error: ' + err.message);
+                }
+            };
+
+            useEffect(() => {
+                fetchData();
+                const interval = setInterval(fetchData, 3000);
+                return () => clearInterval(interval);
+            }, [selectedCommunityRegion, selectedCommunityForum, selectedDisputeRegion]);
+
+            useEffect(() => {
+                const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+                const ws = new WebSocket(`${protocol}//${window.location.host}/ws/stream`);
+
+                ws.onmessage = (event) => {
+                    try {
+                        const data = JSON.parse(event.data);
+                        if (data.type !== 'route_memory_saved' || !data.memory) return;
+
+                        setRouteMemories(prev => {
+                            const exists = prev.some(item => item.id === data.memory.id);
+                            const next = exists
+                                ? prev.map(item => item.id === data.memory.id ? data.memory : item)
+                                : [data.memory, ...prev];
+                            return next.sort((a, b) => {
+                                const keyCompare = String(a.device_key || '').localeCompare(String(b.device_key || ''));
+                                if (keyCompare !== 0) return keyCompare;
+                                return (Number(b.created_at || 0) - Number(a.created_at || 0));
+                            });
+                        });
+
+                        setLatestRouteMemoryEvent(data.memory);
+                        setHighlightedRouteMemoryId(data.memory.id);
+                        setTimeout(() => setHighlightedRouteMemoryId(current => current === data.memory.id ? null : current), 6000);
+
+                        if (activeTab === 'route_memory') {
+                            setTimeout(() => {
+                                const el = document.getElementById(`route-memory-${data.memory.id}`);
+                                if (el) {
+                                    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                                }
+                            }, 120);
+                        }
+                    } catch (err) {
+                        console.error('Route memory websocket parse failed', err);
+                    }
+                };
+
+                return () => ws.close();
+            }, [activeTab]);
+
+            // Broadcast device position to iframe map
+            useEffect(() => {
+                const iframe = document.querySelector('iframe[title="Map"]');
+                if (iframe && iframe.contentWindow) {
+                    // Send Active Device Update First (to center map)
+                    const activeDev = devices.find(d => d.id === activeIdRef.current);
+                    if (activeDev && activeDev.status === 'online') {
+                        iframe.contentWindow.postMessage({
+                            type: 'DEVICE_UPDATE',
+                            device: { ...activeDev, isActive: true }
+                        }, '*');
+                    }
+                    
+                    // Send Others
+                    devices.forEach(dev => {
+                        if (dev.status === 'online' && dev.id !== activeIdRef.current) {
+                            iframe.contentWindow.postMessage({
+                                type: 'DEVICE_UPDATE',
+                                device: dev
+                            }, '*');
+                        }
+                    });
+                }
+            }, [devices, activeDeviceId]);
+
+            const fetchData = async () => {
+                try {
+                    const devRes = ensureAdminResponse(await fetch('/api/admin/devices', { credentials: 'include' }));
+                    const devData = await devRes.json();
+                    if(devData.success) {
+                        if (devData.devices && devData.devices.length > 0) {
+                            setDevices(devData.devices.map(d => ({
+                                ...d,
+                                name: d.name || `Device ${d.id.substring(0,6)}`,
+                                location: d.location || 'Unknown Location'
+                            })));
+                            if (!activeIdRef.current && devData.devices.length > 0) {
+                                setActiveDeviceId(devData.devices[0].id);
+                            } else if (activeIdRef.current && !devData.devices.find(d => d.id === activeIdRef.current) && devData.devices.length > 0) {
+                                setActiveDeviceId(devData.devices[0].id);
+                            }
+                        }
+                    }
+
+                    const contributionQuery = new URLSearchParams();
+                    contributionQuery.set('targetType', 'shop');
+                    if (selectedCommunityRegion && selectedCommunityRegion !== 'all') contributionQuery.set('regionCode', selectedCommunityRegion);
+                    if (selectedCommunityForum && selectedCommunityForum !== 'all') contributionQuery.set('forumKey', selectedCommunityForum);
+                    const cRes = await fetch(`/api/contribution/list?${contributionQuery.toString()}`);
+                    const cData = await cRes.json();
+                    if(cData.success) {
+                        setContributions(cData.posts || []);
+                        const forumRegions = Array.isArray(cData.forums) ? cData.forums : [];
+                        if (forumRegions.length > 0) {
+                            setCommunityRegions(forumRegions);
+                        } else {
+                            const fallbackRegionsMap = {};
+                            (cData.posts || []).forEach(p => {
+                                const regionCode = p.regionCode || 'default';
+                                const regionName = p.regionName || '默认地区';
+                                const forumKey = p.forumKey || 'default';
+                                const forumName = p.forumName || forumKey;
+                                if (!fallbackRegionsMap[regionCode]) {
+                                    fallbackRegionsMap[regionCode] = { regionCode, regionName, forums: [] };
+                                }
+                                if (!fallbackRegionsMap[regionCode].forums.find(f => f.forumKey === forumKey)) {
+                                    fallbackRegionsMap[regionCode].forums.push({ forumKey, forumName });
+                                }
+                            });
+                            setCommunityRegions(Object.values(fallbackRegionsMap));
+                        }
+                    }
+
+                    const oRes = await fetch('/api/obstacles');
+                    const oData = await oRes.json();
+                    setObstacles(oData);
+
+                    const sRes = await fetch('/api/shops');
+                    const sData = await sRes.json();
+                    setShops(sData);
+
+                    const fallbackAnnotations = buildFallbackAnnotations(oData, sData);
+
+                    try {
+                        const aRes = ensureAdminResponse(await fetch('/api/admin/annotations?marker_type=all', { credentials: 'include' }));
+                        const aData = await aRes.json();
+                        if (aData.success && Array.isArray(aData.annotations)) {
+                            const finalAnnotations = aData.annotations.length > 0 ? aData.annotations : fallbackAnnotations;
+                            setAnnotations(finalAnnotations);
+                            setSelectedAnnotation(prev => {
+                                if (!finalAnnotations.length) return null;
+                                if (!prev) return finalAnnotations[0];
+                                const matched = finalAnnotations.find(item => item.id === prev.id) || finalAnnotations[0];
+                                return mergeAnnotationState(prev, matched);
+                            });
+                        } else {
+                            setAnnotations(fallbackAnnotations);
+                            setSelectedAnnotation(prev => {
+                                if (!fallbackAnnotations.length) return null;
+                                if (!prev) return fallbackAnnotations[0];
+                                const matched = fallbackAnnotations.find(item => item.id === prev.id) || fallbackAnnotations[0];
+                                return mergeAnnotationState(prev, matched);
+                            });
+                        }
+                    } catch (e) {
+                        console.error("Error fetching unified annotations:", e);
+                        setAnnotations(fallbackAnnotations);
+                        setSelectedAnnotation(prev => {
+                            if (!fallbackAnnotations.length) return null;
+                            if (!prev) return fallbackAnnotations[0];
+                            const matched = fallbackAnnotations.find(item => item.id === prev.id) || fallbackAnnotations[0];
+                            return mergeAnnotationState(prev, matched);
+                        });
+                    }
+
+                    try {
+                        const uRes = ensureAdminResponse(await fetch('/api/admin/users', { credentials: 'include' }));
+                        const uData = await uRes.json();
+                        if (uData.success && Array.isArray(uData.users)) {
+                            setUsers(uData.users);
+                            console.log("Loaded users:", uData.users);
+                        } else {
+                            console.error("Failed to load users:", uData);
+                            setUsers([]);
+                        }
+                    } catch (e) {
+                        console.error("Error fetching users:", e);
+                    }
+
+                    const disputeQuery = new URLSearchParams();
+                    disputeQuery.set('targetType', 'obstacle');
+                    if (selectedDisputeRegion && selectedDisputeRegion !== 'all') disputeQuery.set('regionCode', selectedDisputeRegion);
+                    const dRes = await fetch(`/api/disputes?${disputeQuery.toString()}`);
+                    const dData = await dRes.json();
+                    if(dData.success) {
+                        setDisputes(dData.disputes || []);
+                        const backendRegions = Array.isArray(dData.regions) ? dData.regions : [];
+                        const dRegionsArr = backendRegions.map(region => ({
+                            key: region.regionCode,
+                            name: region.regionName || region.regionCode,
+                        }));
+                        setDisputeRegions(dRegionsArr);
+                    }
+
+                    try {
+                        const rmRes = ensureAdminResponse(await fetch('/api/admin/route_memories', { credentials: 'include' }));
+                        const rmData = await rmRes.json();
+                        if (rmData.success) setRouteMemories(rmData.data);
+                    } catch (e) {
+                        console.error("Error fetching route memories:", e);
+                    }
+
+                    try {
+                        const auditRes = ensureAdminResponse(await fetch('/api/admin/annotations/batch_analyze/status', { credentials: 'include' }));
+                        const auditData = await auditRes.json();
+                        if (auditData.success) {
+                            setScheduledAuditInfo(auditData);
+                        }
+                    } catch (e) {
+                        console.error("Error fetching scheduled audit info:", e);
+                    }
+
+                    const onlineDevices = (Array.isArray(devices) ? devices : []).filter(d => d.status === 'online').length;
+                    setServerInfo({
+                        cpu: null,
+                        memory: null,
+                        uptime: onlineDevices > 0 ? '设备在线' : '等待设备',
+                        connections: onlineDevices,
+                        deviceCount: Array.isArray(devices) ? devices.length : 0,
+                    });
+                } catch (e) { console.error(e); }
+            };
+            
+            // --- Handlers (Keep original logic) ---
+            const handleImageUpload = async (e, item, type) => {
+                const file = e.target.files[0];
+                if (!file) return;
+
+                const formData = new FormData();
+                formData.append('image', file);
+
+                try {
+                    const endpoint = type === 'obstacles' ? `/api/obstacles/${item.id}/image` : `/api/shops/${item.id}/image`;
+                    const res = await fetch(endpoint, {
+                        method: 'POST',
+                        body: formData
+                    });
+                    const data = await res.json();
+                    if (data.status === 'success' || data.success || data.imageUrl) {
+                        const newUrl = data.imageUrl;
+                        if (type === 'obstacles') {
+                            setEditObstacle(prev => ({ ...prev, imageUrls: [...(prev.imageUrls || []), newUrl] }));
+                        } else {
+                            setEditShop(prev => ({ ...prev, imageUrls: [...(prev.imageUrls || []), newUrl] }));
+                        }
+                    } else {
+                        alert('Upload failed: ' + data.message);
+                    }
+                } catch (err) {
+                    alert('Upload error: ' + err.message);
+                }
+            };
+
+            const handleUpdateUserStatus = async (userId, newStatus) => {
+                try { 
+                    // Use the same endpoint as handleUpdateUser but with specific payload
+                    await fetch(`/api/admin/users/${userId}`, { 
+                        method: 'PUT', 
+                        headers: {'Content-Type': 'application/json'}, 
+                        body: JSON.stringify({ status: newStatus }) 
+                    }); 
+                    fetchData(); 
+                } catch(e) { alert(e); }
+            };
+            const handleDeleteUser = async (userId) => {
+                if(!confirm('确定删除?')) return;
+                try { await fetch(`/api/admin/users/${userId}`, { method: 'DELETE' }); fetchData(); } catch(e) { alert(e); }
+            };
+            const handleUpdateShop = async (e) => {
+                e.preventDefault();
+                try {
+                    await fetch(`/api/admin/shops/${editShop.id}`, { method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ title: editShop.title, description: editShop.description, status: parseInt(editShop.status) }) });
+                    setEditShop(null); fetchData();
+                } catch(err) { alert(err); }
+            };
+            const handleDeleteShop = async (id) => { if(confirm('确定删除?')) { await fetch(`/api/shops/${id}`, { method: 'DELETE' }); fetchData(); } };
+            const handleUpdateObstacle = async (e) => {
+                e.preventDefault();
+                try {
+                    await fetch(`/api/admin/obstacles/${editObstacle.id}`, { method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ title: editObstacle.title, description: editObstacle.description, status: parseInt(editObstacle.status) }) });
+                    setEditObstacle(null); fetchData();
+                } catch(err) { alert(err); }
+            };
+            const handleDeleteObstacle = async (id) => { if(confirm('确定删除?')) { await fetch(`/api/obstacles/${id}`, { method: 'DELETE' }); fetchData(); } };
+            const handleUpdateContributionAuditPeriod = async (e) => {
+                e.preventDefault();
+                try { await fetch(`/api/admin/contribution/${editContribution.id}/audit_period`, { method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ auditPeriodDays: parseFloat(editContribution.days) }) }); setEditContribution(null); fetchData(); } catch(err) { alert(err); }
+            };
+            const handleApproveContribution = async (id) => { if(confirm('确定通过?')) { await fetch(`/api/admin/contribution/${id}/approve`, { method: 'POST' }); fetchData(); } };
+            const handleDeleteContribution = async (id) => {
+                if(!confirm('确定删除该社区话题吗？此操作不可恢复。')) return;
+                try {
+                    const res = ensureAdminResponse(await fetch(`/api/admin/contribution/${id}`, {
+                        method: 'DELETE',
+                        credentials: 'include',
+                    }));
+                    const data = await res.json();
+                    if (!data.success) throw new Error(data.detail || data.message || '删除失败');
+                    fetchData();
+                } catch (err) {
+                    alert(`删除话题失败：${err.message}`);
+                }
+            };
+            const handleAdminDeleteComment = async (cid, cmid) => { if(confirm('确定删除评论?')) { await fetch(`/api/admin/contribution/${cid}/comment/${cmid}`, { method: 'DELETE' }); fetchData(); } };
+            const toggleComments = (id) => setExpandedComments(prev => ({...prev, [id]: !prev[id]}));
+            const handleLogout = async () => { await fetch('/api/admin/logout', { method: 'POST' }); window.location.href = '/admin/login'; };
+            const handleResolveDispute = async (id, res) => { if(confirm(`确定 ${res}?`)) { await fetch(`/api/admin/disputes/${id}/resolve`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ resolution: res }) }); fetchData(); } };
+
+            const formatAdminTime = (value) => {
+                if (value == null || value === '') return '时间未知';
+                const numeric = Number(value);
+                if (Number.isFinite(numeric) && numeric > 0) {
+                    const ts = numeric > 1e12 ? numeric : numeric * 1000;
+                    return new Date(ts).toLocaleString();
+                }
+                const parsed = new Date(value);
+                return Number.isNaN(parsed.getTime()) ? '时间未知' : parsed.toLocaleString();
+            };
+
+            const getCommunityTitle = (post) => {
+                return post.title || post.markerTitle || post.shopName || post.content?.slice(0, 24) || '未命名社区话题';
+            };
+
+            const isPendingItem = (a) => {
+                const normalizedStatus = parseInt(a?.status, 10);
+                return normalizedStatus !== 1
+                    || a?.disputeStatus === 'new_pending'
+                    || a?.disputeStatus === 'pending_review'
+                    || a?.disputeStatus === 'ai_rejected'
+                    || (a?.title && a.title.includes('待核实'));
+            };
+
+            const getFilteredData = () => {
+                let data = [];
+                if (activeTab === 'annotations') data = annotations;
+
+                if (annotationFilter === 'pending') {
+                    data = data.filter(isPendingItem);
+                } else {
+                    data = data.filter(a => !isPendingItem(a));
+                    if (annotationFilter !== 'all') {
+                        data = data.filter(item => item.marker_type === annotationFilter);
+                    }
+                }
+
+                if (!dataSearchTerm) return data;
+                const lowerTerm = dataSearchTerm.toLowerCase();
+                return data.filter(item => 
+                    (item.title || '').toLowerCase().includes(lowerTerm) || 
+                    (item.description || '').toLowerCase().includes(lowerTerm) ||
+                    (item.address || '').toLowerCase().includes(lowerTerm)
+                );
+            };
+
+            const getGroupedAnnotations = () => {
+                const filtered = getFilteredData();
+                return {
+                    obstacle: filtered.filter(item => (item.marker_type || 'obstacle') === 'obstacle'),
+                    shop: filtered.filter(item => item.marker_type === 'shop'),
+                };
+            };
+
+            const renderAnnotationCard = (item) => (
+                <div
+                    key={item.id}
+                    onClick={() => handleSelectAnnotation(item)}
+                    className={`card bg-white p-5 hover:shadow-xl transition-all duration-300 group border rounded-2xl relative overflow-hidden cursor-pointer ${
+                        selectedAnnotation?.id === item.id ? 'border-blue-300 ring-2 ring-blue-100' : 'border-gray-100'
+                    }`}
+                >
+                    <div className="absolute top-0 right-0 w-16 h-16 bg-gradient-to-br from-blue-50 to-purple-50 rounded-bl-full -z-10"></div>
+                    <div className="flex justify-between items-start mb-3 z-10 relative">
+                        <div className="flex-1 pr-3">
+                            <h3 className="font-bold text-gray-800 text-lg truncate" title={item.title}>{item.title}</h3>
+                            <div className="flex items-center gap-2 mt-1 flex-wrap">
+                                <span className={`inline-flex px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                                    item.marker_type === 'shop'
+                                        ? 'bg-blue-50 text-blue-600 border border-blue-200'
+                                        : 'bg-orange-50 text-orange-600 border border-orange-200'
+                                }`}>
+                                    {item.marker_type === 'shop' ? '店铺标注' : '障碍物标注'}
+                                </span>
+                                {item.disputeStatus && (
+                                    <span className="inline-flex px-2 py-0.5 rounded-full text-[10px] font-bold bg-yellow-50 text-yellow-700 border border-yellow-200">
+                                        {item.disputeStatus === 'pending_review' ? '待复核' : (item.disputeStatus === 'ai_rejected' ? 'AI驳回' : '待核实')}
+                                    </span>
+                                )}
+                            </div>
+                        </div>
+                        <span className={`text-xs px-2.5 py-1 rounded-full font-bold shadow-sm whitespace-nowrap ${
+                            item.disputeStatus === 'pending_review' || item.disputeStatus === 'new_pending'
+                                ? 'bg-yellow-100 text-yellow-700 border border-yellow-200'
+                                : item.disputeStatus === 'ai_rejected' || parseInt(item.status) === 2 || item.status === 'removed'
+                                    ? 'bg-red-100 text-red-700 border border-red-200'
+                                    : parseInt(item.status) === 1
+                                        ? 'bg-green-100 text-green-700 border border-green-200'
+                                        : 'bg-yellow-100 text-yellow-700 border border-yellow-200'
+                        }`}>
+                            {item.disputeStatus === 'pending_review' || item.disputeStatus === 'new_pending'
+                                ? <><i className="fas fa-clock mr-1"></i>待审核</>
+                                : item.disputeStatus === 'ai_rejected' || parseInt(item.status) === 2 || item.status === 'removed'
+                                    ? <><i className="fas fa-times-circle mr-1"></i>未通过</>
+                                    : parseInt(item.status) === 1
+                                        ? <><i className="fas fa-check-circle mr-1"></i>已通过</>
+                                        : <><i className="fas fa-clock mr-1"></i>待处理</>}
+                        </span>
+                    </div>
+                    <p className="text-sm text-gray-500 mb-4 line-clamp-2 min-h-[2.5rem] leading-relaxed">{item.description}</p>
+                    {item.imageUrls && item.imageUrls[0] ? (
+                        <div className="relative rounded-xl overflow-hidden mb-4 shadow-sm">
+                            <img src={item.imageUrls[0].replace('10.0.2.2', window.location.hostname).replace('47.97.184.133', window.location.hostname)} className="w-full h-40 object-cover" onError={(e) => {
+                                if (!e.target.dataset.failed) {
+                                    e.target.dataset.failed = true;
+                                    e.target.style.display = 'none';
+                                }
+                            }}/>
+                        </div>
+                    ) : (
+                        <div className="w-full h-40 bg-gray-50 border border-gray-100 border-dashed rounded-xl mb-4 flex flex-col items-center justify-center text-gray-300">
+                            <i className="fas fa-image text-2xl mb-2 opacity-50"></i>
+                            <span className="text-xs font-medium">No Image</span>
+                        </div>
+                    )}
+                    <div className="flex justify-between items-center mt-auto pt-4 border-t border-gray-50">
+                        <div className="text-xs font-mono text-gray-500 bg-gray-100 px-2 py-1 rounded-md">
+                            <i className="fas fa-location-arrow text-gray-400 mr-1"></i>
+                            {item.lat?.toFixed(4)}, {item.lng?.toFixed(4)}
+                        </div>
+                        <div className="flex gap-2">
+                            {isPendingItem(item) && (
+                                <>
+                                    <button onClick={async (e) => { 
+                                        e.stopPropagation(); 
+                                        if(confirm('确定人工审核通过？')) {
+                                            if (item.pendingContributionId) {
+                                                await fetch(`/api/admin/contribution/${item.pendingContributionId}/approve`, { method: 'POST' });
+                                            } else {
+                                                const updateEndpoint = item.marker_type === 'shop' ? `/api/admin/shops/${item.id}` : `/api/obstacles`;
+                                                const method = item.marker_type === 'shop' ? 'PUT' : 'POST';
+                                                await fetch(updateEndpoint, {
+                                                    method: method,
+                                                    headers: { 'Content-Type': 'application/json' },
+                                                    body: JSON.stringify({ ...item, status: 1, disputeStatus: null, title: item.title.replace(' (待核实)', '') })
+                                                });
+                                            }
+                                            fetchData();
+                                        }
+                                    }} className="w-8 h-8 flex items-center justify-center bg-green-50 text-green-600 hover:bg-green-600 hover:text-white rounded-lg transition-colors shadow-sm" title="通过"><i className="fas fa-check"></i></button>
+                                    <button onClick={async (e) => { 
+                                        e.stopPropagation(); 
+                                        if(confirm('确定人工审核驳回？')) {
+                                            if (item.pendingContributionId) {
+                                                await fetch(`/api/admin/contribution/${item.pendingContributionId}/reject`, { method: 'POST' });
+                                            } else {
+                                                const updateEndpoint = item.marker_type === 'shop' ? `/api/admin/shops/${item.id}` : `/api/obstacles`;
+                                                const method = item.marker_type === 'shop' ? 'PUT' : 'POST';
+                                                await fetch(updateEndpoint, {
+                                                    method: method,
+                                                    headers: { 'Content-Type': 'application/json' },
+                                                    body: JSON.stringify({ ...item, status: 2, disputeStatus: null })
+                                                });
+                                            }
+                                            fetchData();
+                                        }
+                                    }} className="w-8 h-8 flex items-center justify-center bg-red-50 text-red-600 hover:bg-red-600 hover:text-white rounded-lg transition-colors shadow-sm" title="驳回"><i className="fas fa-times"></i></button>
+                                </>
+                            )}
+                            <button onClick={(e) => { e.stopPropagation(); handleEditItem(item); }} className="w-8 h-8 flex items-center justify-center bg-blue-50 text-blue-600 hover:bg-blue-600 hover:text-white rounded-lg transition-colors shadow-sm" title="编辑"><i className="fas fa-pen"></i></button>
+                            <button onClick={(e) => { e.stopPropagation(); handleDeleteItem(item); }} className="w-8 h-8 flex items-center justify-center bg-gray-100 text-gray-400 hover:bg-red-600 hover:text-white rounded-lg transition-colors shadow-sm" title="删除"><i className="fas fa-trash"></i></button>
+                        </div>
+                    </div>
+                    {getCardAnalysisText(item) && (
+                        <div className="mt-4 p-3 rounded-xl border border-indigo-100 bg-indigo-50/60">
+                            <div className="text-[10px] font-bold uppercase tracking-wider text-indigo-600 mb-1">AO 证据摘要</div>
+                            <div className="text-sm text-gray-700 leading-6 whitespace-pre-wrap">{getCardAnalysisText(item)}</div>
+                        </div>
+                    )}
+                    {getCardBlindSummary(item) && (
+                        <div className="mt-3 p-3 rounded-xl border border-emerald-100 bg-emerald-50/70">
+                            <div className="text-[10px] font-bold uppercase tracking-wider text-emerald-700 mb-1">导盲摘要</div>
+                            <div className="text-sm text-emerald-900 leading-6 whitespace-pre-wrap">{getCardBlindSummary(item)}</div>
+                        </div>
+                    )}
+                </div>
+            );
+
+            const resolveItemType = (item) => {
+                return item.marker_type || 'obstacle';
+            };
+
+            const handleEditItem = (item) => {
+                const itemType = resolveItemType(item);
+                if (itemType === 'shop') setEditShop(item);
+                else setEditObstacle(item);
+            };
+
+            const handleDeleteItem = (item) => {
+                if (resolveItemType(item) === 'shop') handleDeleteShop(item.id);
+                else handleDeleteObstacle(item.id);
+            };
+
+            const normalizeLocalAnnotation = (item, markerType) => ({
+                ...item,
+                marker_type: markerType,
+                marker_type_label: markerType === 'shop' ? '店铺' : '障碍物',
+                imageUrls: item.imageUrls || [],
+                ai_process: item.ai_process || null,
+                ai_analysis_result: item.ai_analysis_result || '',
+                ai_validation: item.ai_validation || null,
+                blind_guidance_summary: item.blind_guidance_summary || item.voice_prompt || '',
+            });
+
+            const mergeAnnotationState = (prev, next) => {
+                if (!prev) return next;
+                if (!next) return prev;
+                const nextHasAi = !!(next.ai_analysis_result || next.blind_guidance_summary || next.voice_prompt || next.ai_process?.has_real_ai);
+                if (nextHasAi) return { ...prev, ...next };
+                return {
+                    ...prev,
+                    ...next,
+                    ai_analysis_result: prev.ai_analysis_result || next.ai_analysis_result || '',
+                    ai_validation: next.ai_validation || prev.ai_validation || null,
+                    blind_guidance_summary: next.blind_guidance_summary || prev.blind_guidance_summary || prev.voice_prompt || '',
+                    voice_prompt: next.voice_prompt || prev.voice_prompt || '',
+                    ai_process: next.ai_process?.has_real_ai ? next.ai_process : (prev.ai_process || next.ai_process || null),
+                };
+            };
+
+            const buildFallbackAnnotations = (obstacleList, shopList) => {
+                const normalizedObstacles = (Array.isArray(obstacleList) ? obstacleList : []).map(item => normalizeLocalAnnotation(item, 'obstacle'));
+                const normalizedShops = (Array.isArray(shopList) ? shopList : []).map(item => normalizeLocalAnnotation(item, 'shop'));
+                return [...normalizedObstacles, ...normalizedShops].sort((a, b) => {
+                    const aTime = Number(a.createdAt || 0);
+                    const bTime = Number(b.createdAt || 0);
+                    return bTime - aTime;
+                });
+            };
+
+            const ensureAdminResponse = (res) => {
+                if (res && (res.status === 401 || res.status === 403)) {
+                    window.location.href = '/admin/login';
+                    throw new Error('管理员登录已失效，请重新登录');
+                }
+                return res;
+            };
+
+            const getEvidenceItems = (item) => {
+                if (!item) {
+                    return {
+                        baseImages: [],
+                        pendingImages: [],
+                        comments: [],
+                        pendingText: '',
+                        pendingUser: '',
+                        pendingCreatedAt: '',
+                    };
+                }
+
+                const baseImages = Array.isArray(item.imageUrls) ? item.imageUrls.filter(Boolean) : [];
+                const pendingImages = Array.isArray(item.pendingImageUrls)
+                    ? item.pendingImageUrls.filter(Boolean)
+                    : (Array.isArray(item.pending_images) ? item.pending_images.filter(Boolean) : []);
+                const comments = Array.isArray(item.comments)
+                    ? item.comments
+                    : (Array.isArray(item.pendingComments) ? item.pendingComments : []);
+                const pendingText = item.pendingDescription || item.pending_description || item.voice_prompt || '';
+                const pendingUser = item.pendingUserNickname || item.pending_user_nickname || item.pendingUser || item.userNickname || '';
+                const pendingCreatedAt = item.pendingCreatedAt || item.pending_created_at || item.createdAt || '';
+
+                return {
+                    baseImages,
+                    pendingImages,
+                    comments,
+                    pendingText,
+                    pendingUser,
+                    pendingCreatedAt,
+                };
+            };
+
+            const handleSelectAnnotation = (item) => {
+                setSelectedAnnotation(item);
+            };
+
+            const mergeDescriptionWithAnalysis = (description, analysisText) => {
+                const base = (description || '').trim();
+                const analysis = (analysisText || '').trim();
+                if (!analysis) return base;
+                
+                // 改为覆盖/替换逻辑
+                const marker = '[AI检测]:';
+                const markerOld = 'AI分析：';
+                let nextDescription = base;
+                
+                const idx1 = nextDescription.indexOf(marker);
+                if (idx1 !== -1) {
+                    nextDescription = nextDescription.substring(0, idx1).trim();
+                } else {
+                    const idx2 = nextDescription.indexOf(markerOld);
+                    if (idx2 !== -1) {
+                        nextDescription = nextDescription.substring(0, idx2).trim();
+                    }
+                }
+                
+                if (!nextDescription) return `${marker} ${analysis}`;
+                return `${nextDescription}\n${marker} ${analysis}`;
+            };
+
+            const getCardAnalysisText = (item) => {
+                if (item?.ai_analysis_result) return item.ai_analysis_result;
+                const description = item?.description || '';
+                
+                const markerNew = '[AI检测]:';
+                const idxNew = description.indexOf(markerNew);
+                if (idxNew >= 0) return description.slice(idxNew + markerNew.length).trim();
+                
+                const markerOld = 'AI分析：';
+                const idxOld = description.indexOf(markerOld);
+                if (idxOld >= 0) return description.slice(idxOld + markerOld.length).trim();
+                
+                return item?.voice_prompt || '';
+            };
+
+            const getCardBlindSummary = (item) => {
+                if (item?.blind_guidance_summary) return item.blind_guidance_summary;
+                if (item?.ai_validation?.blind_guidance_summary) return item.ai_validation.blind_guidance_summary;
+                return item?.voice_prompt || '';
+            };
+
+            const buildRunningAgentFlow = (item) => ([
+                {
+                    step: '证据整理智能体',
+                    status: 'running',
+                    detail: `正在整理 ${item?.title || item?.id || '当前标注'} 的图片、图文说明与评论证据`,
+                },
+                {
+                    step: '审核分析智能体',
+                    status: 'pending',
+                    detail: '等待审核分析智能体输出图文匹配、风险与播报摘要',
+                },
+                {
+                    step: '审核决策智能体',
+                    status: 'pending',
+                    detail: '等待输出图文一致性结论与审核建议',
+                },
+                {
+                    step: '归档处置智能体',
+                    status: 'pending',
+                    detail: '等待根据审核结论执行通过、驳回或转人工复核',
+                },
+                {
+                    step: '导盲摘要智能体',
+                    status: 'pending',
+                    detail: '等待基于归档结果生成面向盲人的简洁位置提示',
+                }
+            ]);
+
+            const mapWorkflowLogsToAgentFlow = (logs = [], success = true) => {
+                const safeLogs = Array.isArray(logs) ? logs : [];
+                const mapped = [
+                    {
+                        step: '证据整理智能体',
+                        status: 'done',
+                        detail: safeLogs.filter(log => ['读取统一标注数据', '装载图片输入', '当前标注没有图片'].some(key => String(log).includes(key))).join('\n'),
+                    },
+                    {
+                        step: '审核分析智能体',
+                        status: success ? 'done' : 'error',
+                        detail: safeLogs.filter(log => ['审核分析智能体', '分析模型调用失败'].some(key => String(log).includes(key))).join('\n'),
+                    },
+                    {
+                        step: '审核决策智能体',
+                        status: success ? 'done' : 'error',
+                        detail: safeLogs.filter(log => ['审核决策智能体', '图文校验', '审核决策'].some(key => String(log).includes(key))).join('\n'),
+                    },
+                    {
+                        step: '归档处置智能体',
+                        status: success ? 'done' : 'pending',
+                        detail: safeLogs.filter(log => ['归档处置智能体', '自动审核触发', '转人工复核', '审核驳回', '待审核投稿已同步通过', '待审核投稿已写入 AI 结论', '待审核投稿缺少自动通过条件', '保存失败', '未在主库中找到对应记录'].some(key => String(log).includes(key))).join('\n'),
+                    },
+                    {
+                        step: '导盲摘要智能体',
+                        status: success ? 'done' : 'pending',
+                        detail: safeLogs.filter(log => ['导盲摘要智能体', '导盲提示', '盲人摘要', '位置摘要'].some(key => String(log).includes(key))).join('\n'),
+                    }
+                ];
+
+                return mapped.filter(item => item.detail);
+            };
+
+            useEffect(() => {
+                if (!selectedAnnotation?.id) return;
+                const nextItem = annotations.find(item => item.id === selectedAnnotation.id);
+                if (nextItem && nextItem !== selectedAnnotation) {
+                    setSelectedAnnotation(prev => mergeAnnotationState(prev, nextItem));
+                }
+            }, [annotations, selectedAnnotation?.id]);
+
+            const shouldShowWorkflowDetails = workflowLoading
+                || liveWorkflowSteps.length > 0
+                || Boolean(workflowResult)
+                || Boolean(workflowError);
+
+            const applyAnalysisToLocalState = (item, analysisText, workflowLogsArray = [], meta = {}) => {
+                if (!item || !analysisText) return;
+                const nextDescription = mergeDescriptionWithAnalysis(item.description, analysisText);
+                const reviewDecision = meta.reviewDecision || null;
+                const validation = meta.validation || null;
+                const blindGuidanceSummary = meta.blindGuidanceSummary || validation?.blind_guidance_summary || '';
+                const updateOne = (entry) => {
+                    if (!entry || entry.id !== item.id) return entry;
+                    
+                    const flowSteps = workflowLogsArray.length > 0
+                        ? mapWorkflowLogsToAgentFlow(workflowLogsArray, true)
+                        : [];
+
+                    return {
+                        ...entry,
+                        status: reviewDecision?.decision === 'approve' ? 1 : (reviewDecision?.decision === 'reject' ? 2 : 0),
+                        disputeStatus: reviewDecision?.decision === 'approve' ? null : (reviewDecision?.decision === 'reject' ? 'ai_rejected' : 'pending_review'),
+                        title: reviewDecision?.decision === 'approve'
+                            ? (entry.title || '').replace('(待核实)', '').trim()
+                            : ((entry.title || '').includes('(待核实)') ? (entry.title || '') : `${entry.title || ''} (待核实)`.trim()),
+                        description: nextDescription,
+                        ai_analysis_result: analysisText,
+                        voice_prompt: blindGuidanceSummary || entry.voice_prompt || analysisText,
+                        blind_guidance_summary: blindGuidanceSummary || entry.blind_guidance_summary || '',
+                        ai_validation: validation ? { ...(entry.ai_validation || {}), ...validation } : entry.ai_validation,
+                        ai_process: {
+                            ...(entry.ai_process || {}),
+                            has_real_ai: true,
+                            flow_steps: flowSteps,
+                        },
+                    };
+                };
+
+                setAnnotations(prev => prev.map(updateOne));
+                if (item.marker_type === 'shop') {
+                    setShops(prev => prev.map(updateOne));
+                    setEditShop(prev => prev && prev.id === item.id ? updateOne(prev) : prev);
+                } else {
+                    setObstacles(prev => prev.map(updateOne));
+                    setEditObstacle(prev => prev && prev.id === item.id ? updateOne(prev) : prev);
+                }
+                setSelectedAnnotation(prev => prev && prev.id === item.id ? updateOne(prev) : prev);
+            };
+
+            const handleAnalyzeSelectedAnnotation = async () => {
+                if (!selectedAnnotation || workflowLoading) return;
+
+                setWorkflowLoading(true);
+                setWorkflowError('');
+                setWorkflowResult('');
+                setWorkflowMeta(null);
+                setLiveWorkflowSteps(buildRunningAgentFlow(selectedAnnotation));
+
+                try {
+                    const res = ensureAdminResponse(await fetch('/api/admin/annotations/analyze_stream', {
+                        method: 'POST',
+                        credentials: 'include',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            marker_id: selectedAnnotation.id,
+                            marker_type: selectedAnnotation.marker_type || 'all',
+                            prompt: workflowPrompt,
+                        }),
+                    }));
+
+                    if (!res.ok) {
+                        throw new Error(`HTTP error! status: ${res.status}`);
+                    }
+
+                    const reader = res.body.getReader();
+                    const decoder = new TextDecoder('utf-8');
+                    let partialLine = '';
+
+                    while (true) {
+                        const { done, value } = await reader.read();
+                        if (done) break;
+
+                        const chunk = decoder.decode(value, { stream: true });
+                        const lines = (partialLine + chunk).split('\n');
+                        partialLine = lines.pop() || '';
+
+                        for (const line of lines) {
+                            if (!line.trim()) continue;
+                            try {
+                                const data = JSON.parse(line);
+                                
+                                if (data.step_update) {
+                                    setLiveWorkflowSteps(prevSteps => {
+                                        return prevSteps.map(step => {
+                                            if (step.step === data.current_agent) {
+                                                return { ...step, status: 'running', detail: data.detail };
+                                            }
+                                            // Agents before the current one should be marked done
+                                            const allAgents = ['证据整理智能体', '审核分析智能体', '审核决策智能体', '归档处置智能体', '导盲摘要智能体'];
+                                            const currentIndex = allAgents.indexOf(data.current_agent);
+                                            const stepIndex = allAgents.indexOf(step.step);
+                                            
+                                            if (stepIndex < currentIndex) {
+                                                return { ...step, status: 'done' };
+                                            }
+                                            return step;
+                                        });
+                                    });
+                                } else if (data.success !== undefined || data.error !== undefined) {
+                                    // Final message
+                                    const logs = Array.isArray(data.workflow_logs) ? data.workflow_logs : [];
+                                    const serverFlowSteps = Array.isArray(data.workflow_flow_steps) ? data.workflow_flow_steps : [];
+                                    setLiveWorkflowSteps(serverFlowSteps.length > 0 ? serverFlowSteps : mapWorkflowLogsToAgentFlow(logs, !!data.success));
+
+                                    if (data.success) {
+                                        const nextResult = data.analysis_text || data.raw_analysis_text || '已完成分析';
+                                        setWorkflowResult(nextResult);
+                                        setWorkflowMeta({
+                                            validation: data.validation || null,
+                                            reviewDecision: data.review_decision || null,
+                                            blindGuidanceSummary: data.blind_guidance_summary || data.validation?.blind_guidance_summary || '',
+                                            rawDecisionText: data.raw_decision_text || '',
+                                            workflowMode: data.workflow_mode || '',
+                                            agentModels: data.agent_models || null,
+                                        });
+                                        applyAnalysisToLocalState(selectedAnnotation, nextResult, logs, {
+                                            reviewDecision: data.review_decision || null,
+                                            validation: data.validation || null,
+                                            blindGuidanceSummary: data.blind_guidance_summary || data.validation?.blind_guidance_summary || '',
+                                        });
+                                        setAnnotationFilter(data.review_decision?.decision === 'approve' ? 'all' : 'pending');
+                                    } else {
+                                        setWorkflowError(data.message || 'AI 分析失败');
+                                    }
+                                }
+                            } catch (e) {
+                                console.error('Failed to parse stream JSON:', e, line);
+                            }
+                        }
+                    }
+                } catch (err) {
+                    setWorkflowError(err.message || 'AI 分析请求失败');
+                    setLiveWorkflowSteps([
+                        {
+                            step: '证据整理智能体',
+                            status: 'done',
+                            detail: `已完成 ${selectedAnnotation.title || selectedAnnotation.id} 的分析请求准备`,
+                        },
+                        {
+                            step: '多模态理解智能体',
+                            status: 'error',
+                            detail: err.message || 'AI 分析请求失败',
+                        }
+                    ]);
+                } finally {
+                    setWorkflowLoading(false);
+                    fetchData(); // Refresh UI to show saved result
+                }
+            };
+
+
+            const handleSearchSubmit = (e) => {
+                e.preventDefault();
+                setDataSearchTerm(currentSearchInput);
+                if (currentSearchInput && dataViewMode === 'list') {
+                    setDataViewMode('map');
+                }
+            };
+
+            // --- UI Components ---
+            const NavItem = ({ id, label, icon }) => (
+                <div onClick={() => setActiveTab(id)} 
+                     className={`nav-item flex items-center gap-3 px-4 py-3 text-sm font-medium rounded-r-full mr-4 ${activeTab === id ? 'active' : 'text-gray-500 hover:text-gray-800'}`}>
+                    <i className={`fas fa-${icon} w-5 text-center`}></i>
+                    {label}
+                </div>
+            );
+
+            const StatCard = ({ title, value, sub, icon, color }) => (
+                <div className="card p-5 flex items-center justify-between">
+                    <div>
+                        <p className="text-gray-400 text-xs uppercase tracking-wider mb-1">{title}</p>
+                        <h3 className="text-2xl font-bold text-gray-800">{value}</h3>
+                        <p className={`text-xs mt-1 ${color}`}>{sub}</p>
+                    </div>
+                    <div className={`w-10 h-10 rounded-full flex items-center justify-center bg-gray-100 text-gray-500`}>
+                        <i className={`fas fa-${icon}`}></i>
+                    </div>
+                </div>
+            );
+
+            return (
+                <div className="flex h-screen overflow-hidden bg-[#f3f4f6] text-gray-800">
+                    {/* Sidebar */}
+                    <aside className="w-64 bg-white border-r border-gray-200 flex flex-col shrink-0 z-20">
+                        <div className="h-16 flex items-center px-6 border-b border-gray-100">
+                            <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center mr-3 shadow-sm shadow-blue-200">
+                                <i className="fas fa-eye text-white"></i>
+                            </div>
+                            <span className="font-bold text-lg tracking-tight text-gray-800">OmniVision</span>
+                        </div>
+
+                        <div className="flex-1 py-6 space-y-1">
+                            <p className="px-6 text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Main</p>
+                            <NavItem id="monitor" label="实时监控" icon="video" />
+                            <NavItem id="3d_dashboard" label="3D 大屏" icon="globe" />
+                            
+                            <p className="px-6 text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2 mt-6">Management</p>
+                            <NavItem id="contributions" label="店铺社区" icon="comment-dots" />
+                            <NavItem id="annotations" label="统一标注库" icon="layer-group" />
+                            <NavItem id="route_memory" label="AI路线记忆" icon="brain" />
+                            <NavItem id="disputes" label="障碍物争议" icon="gavel" />
+                            <NavItem id="users" label="用户管理" icon="users" />
+                        </div>
+
+                        <div className="p-4 border-t border-gray-100">
+                            <button onClick={handleLogout} className="flex items-center gap-3 w-full px-4 py-2 text-sm text-red-500 hover:bg-red-50 rounded-lg transition-colors">
+                                <i className="fas fa-sign-out-alt"></i> 退出登录
+                            </button>
+                        </div>
+                    </aside>
+
+                    {/* Main Content */}
+                    <main className="flex-1 flex flex-col min-w-0 relative">
+                        {/* Header (隐藏在 3D 大屏模式下) */}
+                        {activeTab !== '3d_dashboard' && (
+                            <header className="h-16 bg-white/80 backdrop-blur border-b border-gray-200 flex justify-between items-center px-8 z-10 sticky top-0">
+                                <h2 className="text-lg font-semibold text-gray-800">
+                                    {activeTab === 'monitor' ? '实时监控与地图追踪' :
+                                     activeTab === 'contributions' ? '店铺社区管理' :
+                                     activeTab === 'annotations' ? '统一标注库（障碍物 + 店铺）' :
+                                     activeTab === 'route_memory' ? 'AI 语义路线记忆管理' :
+                                     activeTab === 'disputes' ? '障碍物争议处理' : '用户管理'}
+                                </h2>
+                                <div className="flex items-center gap-4">
+                                    <div className="text-xs text-gray-500">
+                                        服务状态: <span className="text-green-500 font-medium">● 正常</span>
+                                    </div>
+                                    <div className="w-8 h-8 rounded-full bg-gray-200 flex items-center justify-center text-xs text-gray-600 font-bold border border-gray-300">
+                                        AD
+                                    </div>
+                                </div>
+                            </header>
+                        )}
+
+                        {/* Scrollable Content */}
+                        <div className={`flex-1 overflow-auto relative ${activeTab === '3d_dashboard' ? 'p-0' : 'p-8'}`}>
+                            
+                            {/* 3D Dashboard Fullscreen Iframe */}
+                            {activeTab === '3d_dashboard' && (
+                                <iframe src={`/static/3d_dashboard.html?v=${STATIC_VERSION}`} title="3D Dashboard" className="absolute inset-0 w-full h-full border-0"></iframe>
+                            )}
+
+                            {/* Stats Row */}
+                            {(activeTab === 'monitor') && (
+                                <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
+                                    <StatCard title="Users In DB" value={users.length} sub="数据库用户总数" icon="users" color="text-blue-500" />
+                                    <StatCard title="Obstacle Entries" value={obstacles.length} sub="障碍物库总数" icon="map-pin" color="text-green-500" />
+                                    <StatCard title="Open Disputes" value={disputes.length} sub="争议数据总数" icon="clipboard-check" color="text-yellow-500" />
+                                    <StatCard title="Online Devices" value={serverInfo.connections || 0} sub={serverInfo.uptime || '等待设备'} icon="server" color="text-purple-500" />
+                                </div>
+                            )}
+
+                            {/* Monitor View */}
+                            {activeTab === 'monitor' && (
+                                <div className="grid grid-cols-12 gap-6 h-[calc(100vh-16rem)]">
+                                    {/* Left Column: Video & Controls */}
+                                    <div className="col-span-12 xl:col-span-9 flex flex-col gap-6 h-full">
+                                        <div className="card overflow-hidden flex flex-col shadow-sm h-[75%]">
+                                            <div className="bg-white p-3 border-b border-gray-100 flex justify-between items-center">
+                                                <div className="flex items-center gap-2">
+                                                    <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse"></div>
+                                                    <span className="text-xs font-bold text-gray-500 uppercase tracking-wider">
+                                                        Live Feed: <span className="text-gray-800">{devices.find(d => d.id === activeDeviceId)?.name || '全局视频流（未锁定设备）'}</span>
+                                                    </span>
+                                                </div>
+                                                <a href="/monitor" target="_blank" className="text-xs text-blue-500 hover:text-blue-600 font-medium">
+                                                    <i className="fas fa-external-link-alt mr-1"></i> 独立窗口
+                                                </a>
+                                            </div>
+                                            <div className="flex-1 bg-black relative">
+                                                {devices.length > 0 ? (
+                                                    <>
+                                                        <iframe src={activeDeviceId ? `/monitor?client_id=${activeDeviceId}&v=${STATIC_VERSION}` : `/monitor?v=${STATIC_VERSION}`} title="Monitor" className="absolute inset-0 w-full h-full border-0"></iframe>
+                                                        {activeDeviceId && devices.find(d => d.id === activeDeviceId)?.status === 'offline' && (
+                                                            <div className="absolute inset-0 bg-black/80 flex items-center justify-center text-white flex-col">
+                                                                <i className="fas fa-video-slash text-4xl mb-4 text-gray-500"></i>
+                                                                <p>Device Offline</p>
+                                                            </div>
+                                                        )}
+                                                    </>
+                                                ) : (
+                                                    <div className="absolute inset-0 flex items-center justify-center text-white/80 flex-col">
+                                                        <i className="fas fa-video-slash text-4xl mb-4 text-gray-500"></i>
+                                                        <p className="text-base font-medium">当前无在线设备</p>
+                                                        <p className="text-sm text-gray-400 mt-2">设备上线后将在此显示实时视频流</p>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        </div>
+                                        
+                                        <div className="card p-5 shadow-sm mt-4 space-y-5">
+                                            <div>
+                                                <h3 className="text-sm font-bold text-gray-700 mb-4 uppercase tracking-wider">
+                                                    Device Status ({activeDevice?.id || '--'})
+                                                </h3>
+                                                <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+                                                    {/* GNSS Signal */}
+                                                    <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-xl border border-gray-100">
+                                                        <div className="w-10 h-10 rounded-full bg-green-100 text-green-600 flex items-center justify-center shrink-0"><i className="fas fa-satellite-dish"></i></div>
+                                                        <div>
+                                                            <div className="text-xs font-bold text-gray-800">GNSS Signal</div>
+                                                            <div className="text-xs text-green-600 font-medium">
+                                                                {activeDevice?.sats || 'No Data'}
+                                                                {activeDevice?.sats !== undefined && ' Sats'}
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                    {/* Location (Lat/Lng) */}
+                                                    <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-xl border border-gray-100">
+                                                        <div className="w-10 h-10 rounded-full bg-indigo-100 text-indigo-600 flex items-center justify-center shrink-0"><i className="fas fa-map-marker-alt"></i></div>
+                                                        <div>
+                                                            <div className="text-xs font-bold text-gray-800">Location</div>
+                                                            <div className="text-[10px] text-indigo-600 font-medium font-mono leading-tight">
+                                                                {activeDevice?.lat ? (
+                                                                    <>
+                                                                        {activeDevice?.lat.toFixed(5)}<br/>
+                                                                        {activeDevice?.lng.toFixed(5)}
+                                                                    </>
+                                                                ) : 'No Data'}
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                    {/* Speed */}
+                                                    <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-xl border border-gray-100">
+                                                        <div className="w-10 h-10 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center shrink-0"><i className="fas fa-tachometer-alt"></i></div>
+                                                        <div>
+                                                            <div className="text-xs font-bold text-gray-800">Speed</div>
+                                                            <div className="text-xs text-blue-600 font-medium font-mono">
+                                                                {activeDevice?.speed !== undefined ?
+                                                                    `${activeDevice?.speed.toFixed(1)} km/h` : 'No Data'}
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                    {/* Accuracy (HDOP) */}
+                                                     <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-xl border border-gray-100">
+                                                        <div className="w-10 h-10 rounded-full bg-purple-100 text-purple-600 flex items-center justify-center shrink-0"><i className="fas fa-bullseye"></i></div>
+                                                        <div>
+                                                            <div className="text-xs font-bold text-gray-800">Accuracy</div>
+                                                            <div className="text-xs text-purple-600 font-medium">
+                                                                {activeDevice?.hdop !== undefined && activeDevice?.hdop !== 99.9 ?
+                                                                    `HDOP: ${activeDevice?.hdop.toFixed(1)}` : 'No Data'}
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                    {/* Altitude */}
+                                                    <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-xl border border-gray-100">
+                                                        <div className="w-10 h-10 rounded-full bg-orange-100 text-orange-600 flex items-center justify-center shrink-0"><i className="fas fa-mountain"></i></div>
+                                                        <div>
+                                                            <div className="text-xs font-bold text-gray-800">Altitude</div>
+                                                            <div className="text-xs text-orange-600 font-medium">
+                                                                {activeDevice?.alt !== undefined && activeDevice?.alt !== 0 ?
+                                                                    `${activeDevice?.alt.toFixed(1)} m` : 'No Data'}
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+
+                                            {/* 保持与旧版一致：这里只展示实时视频与设备状态，不再叠加导航调试卡片 */}
+                                        </div>
+                                    </div>
+
+                                    {/* Right Column: Device List & Map */}
+                                    <div className="col-span-12 xl:col-span-3 flex flex-col gap-6 h-full">
+                                        
+                                        {/* Device List Section */}
+                                        <div className="card overflow-hidden flex flex-col shadow-sm h-[40%]">
+                                            <div className="bg-white p-3 border-b border-gray-100 flex justify-between items-center">
+                                                <span className="text-xs font-bold text-gray-500 uppercase tracking-wider">Online Devices</span>
+                                                <button onClick={() => setShowDeviceModal(true)} className="text-xs bg-blue-50 text-blue-600 px-3 py-1.5 rounded-lg hover:bg-blue-100 transition-colors font-medium flex items-center gap-1">
+                                                    <i className="fas fa-th-large"></i> View All
+                                                </button>
+                                            </div>
+                                            <div className="p-3 border-b border-gray-50">
+                                                <div className="relative">
+                                                    <i className="fas fa-search absolute left-3 top-2.5 text-gray-400 text-xs"></i>
+                                                    <input 
+                                                        type="text" 
+                                                        placeholder="Quick Search..." 
+                                                        className="pl-8 pr-3 py-2 bg-gray-50 border-none rounded-lg text-xs w-full focus:ring-1 focus:ring-blue-100 outline-none transition-all"
+                                                        value={searchTerm}
+                                                        onChange={e => setSearchTerm(e.target.value)}
+                                                    />
+                                                </div>
+                                            </div>
+                                            <div className="flex-1 overflow-y-auto p-2 space-y-2">
+                                                {devices.filter(d => d.name.toLowerCase().includes(searchTerm.toLowerCase()) || d.id.includes(searchTerm)).map(dev => (
+                                                    <div key={dev.id} 
+                                                         onClick={() => setActiveDeviceId(dev.id)}
+                                                         className={`p-3 rounded-lg border cursor-pointer transition-all flex justify-between items-center ${activeDeviceId === dev.id ? 'bg-blue-50 border-blue-200 shadow-sm' : 'bg-white border-gray-100 hover:border-blue-100'}`}>
+                                                        <div className="flex items-center gap-3">
+                                                            <div className={`w-2 h-2 rounded-full ${dev.status === 'online' ? 'bg-green-500' : 'bg-gray-300'}`}></div>
+                                                            <div>
+                                                                <div className={`text-sm font-bold ${activeDeviceId === dev.id ? 'text-blue-700' : 'text-gray-700'}`}>{dev.name}</div>
+                                                                <div className="text-xs text-gray-400 font-mono">{dev.id}</div>
+                                                            </div>
+                                                        </div>
+                                                        {activeDeviceId === dev.id && <i className="fas fa-chevron-right text-xs text-blue-400"></i>}
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+
+                                        {/* Map Section */}
+                                        <div className="card overflow-hidden flex flex-col shadow-sm h-[60%]">
+                                            <div className="bg-white p-3 border-b border-gray-100 flex justify-between items-center">
+                                                <div className="flex items-center gap-2">
+                                                    <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
+                                                    <span className="text-xs font-bold text-gray-500 uppercase tracking-wider">Tracking</span>
+                                                </div>
+                                                <a href="/static/amap_nav.html" target="_blank" className="text-xs text-blue-500 hover:text-blue-600 font-medium">
+                                                    <i className="fas fa-expand"></i>
+                                                </a>
+                                            </div>
+                                            <div className="flex-1 bg-gray-100 relative">
+                                                {devices.length > 0 ? (
+                                                    <iframe 
+                                                        src={activeDeviceId ? `/static/amap_nav.html?client_id=${activeDeviceId}` : `/static/amap_nav.html`} 
+                                                        title="Map" 
+                                                        className="absolute inset-0 w-full h-full border-0"
+                                                    ></iframe>
+                                                ) : (
+                                                    <div className="absolute inset-0 flex items-center justify-center text-gray-400 flex-col bg-gray-50">
+                                                        <i className="fas fa-map-marked-alt text-3xl mb-3"></i>
+                                                        <p className="text-sm font-medium">当前无在线设备</p>
+                                                        <p className="text-xs mt-1">设备上线后在此显示实时轨迹</p>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+
+                            {activeTab === 'dashboard' && (
+                                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                                    <div className="card p-6 h-64 border border-gray-100">
+                                        <div className="text-sm font-bold text-gray-800 mb-3">实时概览</div>
+                                        <div className="space-y-3 text-sm text-gray-600">
+                                            <div className="flex items-center justify-between"><span>在线设备</span><span className="font-semibold text-gray-900">{serverInfo.connections || 0}</span></div>
+                                            <div className="flex items-center justify-between"><span>障碍物条目</span><span className="font-semibold text-gray-900">{obstacles.length}</span></div>
+                                            <div className="flex items-center justify-between"><span>店铺条目</span><span className="font-semibold text-gray-900">{shops.length}</span></div>
+                                            <div className="flex items-center justify-between"><span>争议条目</span><span className="font-semibold text-gray-900">{disputes.length}</span></div>
+                                            <div className="flex items-center justify-between"><span>统一标注</span><span className="font-semibold text-gray-900">{annotations.length}</span></div>
+                                        </div>
+                                    </div>
+                                    <div className="card p-6 h-64 border border-gray-100">
+                                        <div className="text-sm font-bold text-gray-800 mb-3">社区与路线记忆</div>
+                                        <div className="space-y-3 text-sm text-gray-600">
+                                            <div className="flex items-center justify-between"><span>社区帖子</span><span className="font-semibold text-gray-900">{contributions.length}</span></div>
+                                            <div className="flex items-center justify-between"><span>路线记忆</span><span className="font-semibold text-gray-900">{routeMemories.length}</span></div>
+                                            <div className="flex items-center justify-between"><span>用户数量</span><span className="font-semibold text-gray-900">{users.length}</span></div>
+                                            <div className="pt-4 text-xs text-gray-400">当前页已移除演示占位图表，改为显示真实接口统计。</div>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+
+                            {activeTab === 'contributions' && (
+                                <div className="space-y-6">
+                                    <div className="card p-4 flex flex-col md:flex-row gap-4 md:items-center md:justify-between">
+                                        <div>
+                                            <div className="text-sm font-bold text-gray-800">店铺社区论坛</div>
+                                            <div className="text-xs text-gray-500 mt-1">按地区与论坛查看店铺话题、评论与互动。</div>
+                                        </div>
+                                        <div className="flex flex-col md:flex-row gap-3 w-full md:w-auto">
+                                            <select
+                                                className="bg-gray-50 border border-gray-200 rounded-xl px-4 py-2 text-sm"
+                                                value={selectedCommunityRegion}
+                                                onChange={e => {
+                                                    setSelectedCommunityRegion(e.target.value);
+                                                    setSelectedCommunityForum('');
+                                                }}
+                                            >
+                                                <option value="">全部地区</option>
+                                                {communityRegions.map(region => (
+                                                    <option key={region.regionCode} value={region.regionCode}>{region.regionName}</option>
+                                                ))}
+                                            </select>
+                                            <select
+                                                className="bg-gray-50 border border-gray-200 rounded-xl px-4 py-2 text-sm"
+                                                value={selectedCommunityForum}
+                                                onChange={e => setSelectedCommunityForum(e.target.value)}
+                                            >
+                                                <option value="">全部论坛</option>
+                                                {(communityRegions.find(region => region.regionCode === selectedCommunityRegion)?.forums || communityRegions.flatMap(region => region.forums || [])).map(forum => (
+                                                    <option key={`${forum.forumKey}-${forum.forumName}`} value={forum.forumKey}>{forum.forumName}</option>
+                                                ))}
+                                            </select>
+                                        </div>
+                                    </div>
+
+                                    <div className="grid grid-cols-1 gap-4">
+                                        {contributions.length === 0 && (
+                                            <div className="col-span-full py-20 flex flex-col items-center justify-center bg-white rounded-2xl border border-dashed border-gray-300">
+                                                <i className="fas fa-comments text-blue-200 text-6xl mb-4"></i>
+                                                <p className="text-gray-500 font-medium">当前地区论坛暂无店铺社区话题</p>
+                                            </div>
+                                        )}
+                                        {contributions.map(c => (
+                                            <div key={c.id} className="card bg-white p-6 rounded-2xl border border-gray-100 shadow-sm hover:shadow-md transition-all">
+                                                <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
+                                                    <div className="flex-1 min-w-0">
+                                                        <div className="flex flex-wrap items-center gap-2 mb-3">
+                                                            <span className="px-2 py-1 rounded-full text-xs font-medium bg-blue-50 text-blue-600">{c.regionName || '默认地区'}</span>
+                                                            <span className="px-2 py-1 rounded-full text-xs font-medium bg-indigo-50 text-indigo-600">{c.forumName || '默认论坛'}</span>
+                                                            <span className="px-2 py-1 rounded-full text-xs font-medium bg-emerald-50 text-emerald-600">店铺社区</span>
+                                                        </div>
+                                                        <div className="text-lg font-bold text-gray-800 truncate">{getCommunityTitle(c)}</div>
+                                                        <div className="text-sm text-gray-500 mt-1">作者：{c.userNickname || '匿名用户'} · {formatAdminTime(c.createdAt)}</div>
+                                                        <div className="text-sm text-gray-700 mt-3 whitespace-pre-wrap">{c.content}</div>
+                                                        {c.imageUrl && (
+                                                            <img src={c.imageUrl} className="mt-4 w-full max-w-md h-48 object-cover rounded-xl border border-gray-100" />
+                                                        )}
+                                                        <div className="mt-4 flex flex-wrap items-center gap-4 text-sm text-gray-500">
+                                                            <span><i className="fas fa-comment-dots mr-1 text-blue-400"></i>{c.comments?.length || 0} 条评论</span>
+                                                            <span><i className="fas fa-thumbs-up mr-1 text-green-400"></i>{c.upvotes?.length || 0}</span>
+                                                            <span><i className="fas fa-thumbs-down mr-1 text-red-400"></i>{c.downvotes?.length || 0}</span>
+                                                        </div>
+                                                        {c.comments?.length > 0 && (
+                                                            <div className="mt-4 bg-gray-50 border border-gray-100 rounded-xl p-3 space-y-2">
+                                                                {c.comments.slice(0, 3).map(cm => (
+                                                                    <div key={cm.id} className="text-sm text-gray-600">
+                                                                        <span className="font-semibold text-blue-600">{cm.userNickname}</span>：{cm.content}
+                                                                    </div>
+                                                                ))}
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                    <div className="flex md:flex-col gap-2 shrink-0">
+                                                        <button onClick={() => handleDeleteContribution(c.id)} className="px-4 py-2 bg-red-50 hover:bg-red-600 text-red-600 hover:text-white rounded-lg text-sm font-bold transition-all shadow-sm">删除话题</button>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* 统一标注视图 */}
+                            {activeTab === 'annotations' && (
+                                <div className="space-y-6">
+                                    {/* Action Bar */}
+                                    <div className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 flex flex-col md:flex-row justify-between items-center gap-4 relative">
+                                        <form onSubmit={handleSearchSubmit} className="flex-1 relative w-full max-w-2xl">
+                                            <i className="fas fa-search absolute left-4 top-3.5 text-gray-400"></i>
+                                            <input 
+                                                type="text" 
+                                                placeholder="搜索名称、描述，或输入地区进行地图定位 (如: 苏州市虎丘区)..." 
+                                                className="w-full pl-11 pr-24 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-shadow text-sm"
+                                                value={currentSearchInput}
+                                                onChange={e => setCurrentSearchInput(e.target.value)}
+                                            />
+                                            <button type="submit" className="absolute right-2 top-2 bottom-2 bg-blue-600 hover:bg-blue-700 text-white px-5 rounded-lg text-sm font-medium transition-colors shadow-sm">
+                                                全局搜索
+                                            </button>
+                                            
+                                            {/* Auto-complete Dropdown */}
+                                            {currentSearchInput && currentSearchInput.trim() !== '' && currentSearchInput !== dataSearchTerm && (
+                                                <div className="absolute top-full left-0 right-0 mt-2 bg-white border border-gray-100 rounded-xl shadow-xl z-50 max-h-60 overflow-y-auto">
+                                                    {(() => {
+                                                        const lowerInput = currentSearchInput.toLowerCase();
+                                                        const data = getFilteredData();
+                                                        const matches = data.filter(item => 
+                                                            (item.title || '').toLowerCase().includes(lowerInput) || 
+                                                            (item.description || '').toLowerCase().includes(lowerInput) ||
+                                                            (item.address || '').toLowerCase().includes(lowerInput)
+                                                        );
+                                                        
+                                                        if (matches.length === 0) {
+                                                            return (
+                                                                <div 
+                                                                    className="px-4 py-3 text-sm text-gray-500 cursor-pointer hover:bg-gray-50 flex items-center gap-3"
+                                                                    onClick={() => {
+                                                                        setDataSearchTerm(currentSearchInput);
+                                                                        setDataViewMode('map');
+                                                                    }}
+                                                                >
+                                                                    <i className="fas fa-map-marker-alt text-gray-400"></i>
+                                                                    去地图定位地区 "{currentSearchInput}"
+                                                                </div>
+                                                            );
+                                                        }
+                                                        
+                                                        return matches.map(match => (
+                                                            <div 
+                                                                key={match.id} 
+                                                                className="px-4 py-3 text-sm text-gray-700 hover:bg-blue-50 cursor-pointer border-b border-gray-50 last:border-0 flex items-start gap-3 transition-colors"
+                                                                onClick={() => {
+                                                                    setCurrentSearchInput(match.title || match.description || match.id);
+                                                                    setDataSearchTerm(match.title || match.description || match.id);
+                                                                    setSelectedAnnotation(match);
+                                                                    setDataViewMode('map');
+                                                                }}
+                                                            >
+                                                                <i className={`fas ${
+                                                                    (match.marker_type || 'obstacle') === 'shop'
+                                                                        ? 'fa-store text-blue-500'
+                                                                        : 'fa-map-marker-alt text-orange-500'
+                                                                } mt-1`}></i>
+                                                                <div>
+                                                                    <div className="font-bold text-gray-800">{match.title || '未命名'}</div>
+                                                                    <div className="text-xs text-gray-500 line-clamp-1">{match.description || '无描述'}</div>
+                                                                </div>
+                                                            </div>
+                                                        ));
+                                                    })()}
+                                                </div>
+                                            )}
+                                        </form>
+                                        <div className="flex flex-col md:flex-row gap-3 w-full md:w-auto shrink-0">
+                                            <div className="flex bg-gray-100 p-1 rounded-xl w-full md:w-auto">
+                                                <button
+                                                    onClick={() => setAnnotationFilter('all')}
+                                                    className={`flex-1 md:flex-none px-4 py-2.5 rounded-lg text-sm font-bold transition-all ${annotationFilter === 'all' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+                                                >
+                                                    全部
+                                                </button>
+                                                <button
+                                                    onClick={() => setAnnotationFilter('obstacle')}
+                                                    className={`flex-1 md:flex-none px-4 py-2.5 rounded-lg text-sm font-bold transition-all ${annotationFilter === 'obstacle' ? 'bg-white text-orange-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+                                                >
+                                                    障碍物
+                                                </button>
+                                                <button
+                                                    onClick={() => setAnnotationFilter('shop')}
+                                                    className={`flex-1 md:flex-none px-4 py-2.5 rounded-lg text-sm font-bold transition-all ${annotationFilter === 'shop' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+                                                >
+                                                    店铺
+                                                </button>
+                                                <button
+                                                    onClick={() => setAnnotationFilter('pending')}
+                                                    className={`flex-1 md:flex-none px-4 py-2.5 rounded-lg text-sm font-bold transition-all ${annotationFilter === 'pending' ? 'bg-white text-red-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+                                                >
+                                                    待审核
+                                                </button>
+                                            </div>
+                                            <div className="flex bg-gray-100 p-1 rounded-xl w-full md:w-auto">
+                                            <button onClick={() => setDataViewMode('list')} className={`flex-1 md:flex-none px-6 py-2.5 rounded-lg text-sm font-bold transition-all ${dataViewMode === 'list' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>
+                                                <i className="fas fa-list mr-2"></i> 列表
+                                            </button>
+                                            <button onClick={() => setDataViewMode('map')} className={`flex-1 md:flex-none px-6 py-2.5 rounded-lg text-sm font-bold transition-all ${dataViewMode === 'map' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>
+                                                <i className="fas fa-map-marked-alt mr-2"></i> 地图定位
+                                            </button>
+                                            </div>
+                                            <div className="ml-2 px-3 py-2 rounded-xl bg-indigo-50 border border-indigo-100 text-sm text-indigo-700 font-medium flex-1 min-w-0 flex flex-col gap-2">
+                                                <div className="flex flex-col xl:flex-row xl:items-center gap-2 min-w-0">
+                                                    <span className="flex-1 min-w-0 break-words">社区图文与评论将作为 AO 分析输入，不再启用自动识别工作流</span>
+                                                    <div className="flex flex-wrap items-center bg-white rounded-lg border border-indigo-200 overflow-hidden shadow-sm shrink-0 max-w-full">
+                                                    <input 
+                                                        type="time" 
+                                                        id="auditTimeInput"
+                                                        className="px-3 py-1.5 text-xs text-gray-700 outline-none border-r border-indigo-100" 
+                                                        defaultValue={scheduledAuditInfo.scheduled_time || "00:00"}
+                                                    />
+                                                    <button onClick={async () => {
+                                                        const timeVal = document.getElementById('auditTimeInput').value;
+                                                        if(confirm(`确定设置每天 ${timeVal} 对所有待审核标注进行全量 AI 分析？\n（注：点击确定后将立即执行一次当前全量审核，并保存定时配置）`)) {
+                                                            try {
+                                                                const response = ensureAdminResponse(await fetch('/api/admin/annotations/batch_analyze', { 
+                                                                    method: 'POST',
+                                                                    credentials: 'include',
+                                                                    headers: {'Content-Type': 'application/json'},
+                                                                    body: JSON.stringify({ scheduled_time: timeVal })
+                                                                }));
+                                                                const result = await response.json();
+                                                                alert(result.message || '定时全量审核任务已配置并启动');
+                                                                fetchData();
+                                                            } catch(e) {
+                                                                alert(`启动失败：${e.message}`);
+                                                            }
+                                                        }
+                                                    }} className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold transition-colors flex items-center gap-1">
+                                                        <i className="fas fa-pen"></i> 定时全量审核
+                                                    </button>
+                                                    {scheduledAuditInfo.enabled && (
+                                                        <button
+                                                            onClick={async () => {
+                                                                if (!confirm('确定关闭定时全量审核吗？')) return;
+                                                                try {
+                                                                    const response = ensureAdminResponse(await fetch('/api/admin/annotations/batch_analyze', {
+                                                                        method: 'POST',
+                                                                        credentials: 'include',
+                                                                        headers: {'Content-Type': 'application/json'},
+                                                                        body: JSON.stringify({ disable_schedule: true })
+                                                                    }));
+                                                                    const result = await response.json();
+                                                                    alert(result.message || '已关闭定时全量审核');
+                                                                    fetchData();
+                                                                } catch (e) {
+                                                                    alert(`关闭失败：${e.message}`);
+                                                                }
+                                                            }}
+                                                            className="px-3 py-1.5 bg-white hover:bg-gray-50 text-gray-600 text-xs font-bold border-l border-indigo-100 transition-colors"
+                                                        >
+                                                            关闭定时
+                                                        </button>
+                                                    )}
+                                                    </div>
+                                                </div>
+                                                {(scheduledAuditInfo.enabled || scheduledAuditInfo.last_run_at) && (
+                                                    <div className="flex flex-wrap items-center gap-2 text-[11px] text-indigo-700 leading-4">
+                                                        <span className={`inline-flex items-center px-2 py-0.5 rounded-full border ${scheduledAuditInfo.enabled ? 'bg-indigo-100 border-indigo-200 text-indigo-700' : 'bg-white border-indigo-100 text-indigo-500'}`}>
+                                                            {scheduledAuditInfo.enabled ? `每日 ${scheduledAuditInfo.scheduled_time} 自动执行` : '当前未启用自动执行'}
+                                                        </span>
+                                                        {scheduledAuditInfo.last_run_at && (
+                                                            <span
+                                                                className="inline-flex items-center px-2 py-0.5 rounded-full bg-white border border-indigo-100 text-indigo-600 cursor-help"
+                                                                title={`最近执行：${scheduledAuditInfo.last_run_at}${scheduledAuditInfo.last_result?.processed_count != null ? `\n最近处理：${scheduledAuditInfo.last_result.processed_count} 条\n成功：${scheduledAuditInfo.last_result.success_count ?? 0} 条\n失败：${scheduledAuditInfo.last_result.failure_count ?? 0} 条` : ''}`}
+                                                            >
+                                                                最近执行结果
+                                                            </span>
+                                                        )}
+                                                        {scheduledAuditInfo.last_result?.processed_count != null && (
+                                                            <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-white border border-indigo-100 text-indigo-600">
+                                                                处理 {scheduledAuditInfo.last_result.processed_count} 条
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                )}
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div className="text-sm text-gray-500 px-1">
+                                        当前来源：
+                                        <button onClick={() => setAnnotationFilter('obstacle')} className="font-semibold text-orange-600 ml-2 hover:underline">障碍物 {annotations.filter(a => !isPendingItem(a) && a.marker_type === 'obstacle').length}</button>
+                                        <button onClick={() => setAnnotationFilter('shop')} className="font-semibold text-blue-600 ml-4 hover:underline">店铺 {annotations.filter(a => !isPendingItem(a) && a.marker_type === 'shop').length}</button>
+                                        <button onClick={() => setAnnotationFilter('all')} className="font-semibold text-indigo-600 ml-4 hover:underline">已通过总数 {annotations.filter(a => !isPendingItem(a)).length}</button>
+                                        <button onClick={() => setAnnotationFilter('pending')} className="font-semibold text-red-600 ml-4 hover:underline">待审核 {annotations.filter(a => isPendingItem(a)).length}</button>
+                                    </div>
+
+                                    {/* View Content */}
+                                    <div className="flex flex-col xl:flex-row gap-6">
+                                        <div className="flex-1 min-w-0">
+                                            {dataViewMode === 'map' ? (
+                                                <DataMapView 
+                                                    data={getFilteredData()} 
+                                                    type="annotations" 
+                                                    searchTerm={dataSearchTerm} 
+                                                    onMarkerClick={(item) => handleSelectAnnotation(item)}
+                                                />
+                                            ) : (
+                                                <>
+                                                    {getFilteredData().length === 0 && (
+                                                        <div className="py-20 flex flex-col items-center justify-center bg-white rounded-2xl border border-dashed border-gray-300">
+                                                            <i className="fas fa-layer-group text-indigo-200 text-6xl mb-4"></i>
+                                                            <p className="text-gray-500 font-medium">当前没有任何统一标注数据</p>
+                                                        </div>
+                                                    )}
+                                                    {getFilteredData().length > 0 && annotationFilter === 'all' && (
+                                                        <div className="space-y-8">
+                                                            {(() => {
+                                                                const grouped = getGroupedAnnotations();
+                                                                return (
+                                                                    <>
+                                                                            {grouped.obstacle.length > 0 && (
+                                                                                <div>
+                                                                                    <div className="flex items-center gap-3 mb-4">
+                                                                                        <span className="px-3 py-1 rounded-full text-sm font-bold bg-orange-50 text-orange-600 border border-orange-200">障碍物</span>
+                                                                                        <span className="text-sm text-gray-400">{grouped.obstacle.length} 条</span>
+                                                                                    </div>
+                                                                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                                                                        {grouped.obstacle.map(item => renderAnnotationCard(item))}
+                                                                                    </div>
+                                                                                </div>
+                                                                            )}
+                                                                            {grouped.shop.length > 0 && (
+                                                                                <div>
+                                                                                    <div className="flex items-center gap-3 mb-4 mt-8">
+                                                                                        <span className="px-3 py-1 rounded-full text-sm font-bold bg-blue-50 text-blue-600 border border-blue-200">店铺</span>
+                                                                                        <span className="text-sm text-gray-400">{grouped.shop.length} 条</span>
+                                                                                    </div>
+                                                                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                                                                        {grouped.shop.map(item => renderAnnotationCard(item))}
+                                                                                    </div>
+                                                                                </div>
+                                                                            )}
+                                                                        </>
+                                                                    );
+                                                            })()}
+                                                        </div>
+                                                    )}
+                                                    {getFilteredData().length > 0 && annotationFilter !== 'all' && (
+                                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                                            {getFilteredData().map(item => renderAnnotationCard(item))}
+                                                        </div>
+                                                    )}
+                                                </>
+                                            )}
+                                        </div>
+
+                                        <div className="w-full xl:w-[420px] shrink-0 xl:self-start">
+                                            <div className="card bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden xl:sticky xl:top-24 xl:h-[calc(100vh-7rem)] xl:max-h-[calc(100vh-7rem)] flex flex-col">
+                                                <div className="px-5 py-4 border-b border-gray-100 bg-gradient-to-r from-slate-50 to-indigo-50">
+                                                    <div className="flex items-center justify-between">
+                                                        <div>
+                                                            <div className="text-sm font-bold text-gray-800">标注证据 / AO 分析输入</div>
+                                                            <div className="text-xs text-gray-500 mt-1">社区图文与评论将作为当前标注的分析素材与人工复核依据</div>
+                                                        </div>
+                                                        <span className="text-[11px] px-2 py-1 rounded-full bg-indigo-100 text-indigo-700 font-semibold">{selectedAnnotation?.marker_type === 'shop' ? 'Shop' : 'Obstacle'}</span>
+                                                    </div>
+                                                </div>
+
+                                                <div className="p-5 space-y-4 overflow-y-auto flex-1 min-h-0">
+                                                    {selectedAnnotation ? (
+                                                        <>
+                                                            <div>
+                                                                <div className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">选择标注</div>
+                                                                <select
+                                                                    className="w-full bg-gray-50 border border-gray-200 rounded-xl p-3 text-sm text-gray-800 outline-none focus:ring-2 focus:ring-indigo-200"
+                                                                    value={selectedAnnotation?.id || ''}
+                                                                    onChange={(e) => {
+                                                                        const nextId = e.target.value;
+                                                                        const nextItem = annotations.find(item => String(item.id) === String(nextId));
+                                                                        if (nextItem) handleSelectAnnotation(nextItem);
+                                                                    }}
+                                                                >
+                                                                    {annotations.map(item => (
+                                                                        <option key={item.id} value={item.id}>
+                                                                            {item.marker_type === 'shop' ? '店铺' : '障碍物'} - {item.title || item.id}
+                                                                        </option>
+                                                                    ))}
+                                                                </select>
+                                                            </div>
+
+                                                            <div className="bg-gray-50 rounded-xl border border-gray-100 p-4">
+                                                                <div className="text-sm font-semibold text-gray-800">{selectedAnnotation.title}</div>
+                                                                <div className="text-xs text-gray-500 mt-1 max-h-20 overflow-y-auto">{selectedAnnotation.description || '无描述'}</div>
+                                                                <div className="text-[11px] text-gray-400 font-mono mt-2">{selectedAnnotation.id}</div>
+                                                            </div>
+
+                                                            {/* 紧凑型分析输入区 */}
+                                                            <div className="pt-1 space-y-4">
+                                                                {/* AI 分析核心区 */}
+                                                                <div className="rounded-2xl border border-indigo-100 bg-white p-5 shadow-sm space-y-5">
+                                                                    <div className="flex items-center justify-between gap-3 border-b border-gray-50 pb-3">
+                                                                        <div className="flex items-center gap-3">
+                                                                            <div className="w-10 h-10 rounded-xl bg-indigo-50 flex items-center justify-center text-indigo-600 shadow-sm">
+                                                                                <i className="fas fa-robot text-lg"></i>
+                                                                            </div>
+                                                                            <div>
+                                                                                <div className="text-base font-bold text-gray-800 flex items-center gap-2">
+                                                                                    <span>AI 分析工作流</span>
+                                                                                    {workflowLoading && (
+                                                                                        <span className="inline-flex items-center gap-1 text-xs text-indigo-600 font-semibold">
+                                                                                            <i className="fas fa-spinner fa-spin"></i>
+                                                                                            分析中
+                                                                                        </span>
+                                                                                    )}
+                                                                                </div>
+                                                                                <div className="text-xs text-gray-500 mt-1">手动触发图文分析，结果将自动保存回卡片。</div>
+                                                                            </div>
+                                                                        </div>
+                                                                    </div>
+
+                                                                    <div>
+                                                                        <div className="text-xs font-bold text-gray-500 mb-2">分析指令</div>
+                                                                        <textarea
+                                                                            value={workflowPrompt}
+                                                                            onChange={(e) => setWorkflowPrompt(e.target.value)}
+                                                                            className="w-full min-h-[72px] bg-gray-50 border border-gray-200 rounded-xl p-3 text-sm text-gray-700 outline-none focus:ring-2 focus:ring-indigo-200 resize-none"
+                                                                            placeholder="输入本次 AI 分析的补充要求"
+                                                                        />
+                                                                        <div className="mt-3 flex justify-end">
+                                                                            <button
+                                                                                onClick={handleAnalyzeSelectedAnnotation}
+                                                                                disabled={workflowLoading}
+                                                                                className={`px-5 py-2.5 rounded-xl text-sm font-bold shadow-md transition-all flex items-center gap-2 ${workflowLoading ? 'bg-indigo-400 text-white cursor-not-allowed opacity-80' : 'bg-indigo-600 text-white hover:bg-indigo-700 hover:shadow-lg hover:-translate-y-0.5'}`}
+                                                                            >
+                                                                                {workflowLoading ? <i className="fas fa-spinner fa-spin"></i> : <i className="fas fa-magic"></i>}
+                                                                                {workflowLoading ? '正在分析证据...' : '开始 AI 分析'}
+                                                                            </button>
+                                                                        </div>
+                                                                    </div>
+
+                                                                    {/* 可视化工作流进度条 (Timeline) */}
+                                                                    {shouldShowWorkflowDetails && (
+                                                                    <div>
+                                                                        <div className="flex items-center justify-between gap-3 mb-3">
+                                                                            <div className="text-xs font-bold text-gray-500">工作流进度</div>
+                                                                            <button
+                                                                                type="button"
+                                                                                onClick={() => setWorkflowStepsExpanded(prev => !prev)}
+                                                                                className="text-[11px] px-2.5 py-1 rounded-full border border-gray-200 bg-white text-gray-600 hover:bg-gray-50 transition-colors"
+                                                                            >
+                                                                                {workflowStepsExpanded ? '收起详细步骤' : '展开详细步骤'}
+                                                                            </button>
+                                                                        </div>
+                                                                        <div className="rounded-xl border border-gray-100 bg-gray-50 p-5">
+                                                                                <div className="relative pl-3 border-l-2 border-gray-200 space-y-6">
+                                                                                    {liveWorkflowSteps.map((step, idx) => (
+                                                                                        <div key={`workflow_step_${idx}`} className="relative">
+                                                                                            <span className={`absolute -left-[19px] top-1 w-3 h-3 rounded-full border-2 border-white shadow-sm ${step.status === 'error' ? 'bg-red-500' : step.status === 'running' ? 'bg-amber-400 animate-pulse' : step.status === 'pending' ? 'bg-gray-300' : 'bg-emerald-500'}`}></span>
+                                                                                            <div>
+                                                                                                <div className="text-sm font-bold text-gray-800 flex items-center gap-2">
+                                                                                                    <span>{step.step || `步骤 ${idx + 1}`}</span>
+                                                                                                    {step.status === 'running' && (
+                                                                                                        <i className="fas fa-spinner fa-spin text-amber-500 text-xs"></i>
+                                                                                                    )}
+                                                                                                </div>
+                                                                                                {workflowStepsExpanded && (
+                                                                                                    <div className="text-xs text-gray-500 mt-1 whitespace-pre-wrap leading-relaxed inline-block w-full">{step.detail || '等待执行'}</div>
+                                                                                                )}
+                                                                                            </div>
+                                                                                        </div>
+                                                                                    ))}
+                                                                                </div>
+                                                                        </div>
+                                                                    </div>
+                                                                    )}
+
+                                                                    {workflowError && shouldShowWorkflowDetails && (
+                                                                        <div className="rounded-xl border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-600 leading-6 whitespace-pre-wrap">
+                                                                            {workflowError}
+                                                                        </div>
+                                                                    )}
+
+                                                                    {/* 分析结果 */}
+                                                                    {shouldShowWorkflowDetails && (
+                                                                    <div>
+                                                                        <div className="flex justify-between items-center mb-2">
+                                                                            <div className="text-xs font-bold text-indigo-600 flex items-center gap-2">
+                                                                                <i className="fas fa-check-circle"></i> 最新分析结果
+                                                                            </div>
+                                                                            {workflowResult && <span className="text-[10px] bg-green-100 text-green-700 px-2 py-0.5 rounded font-bold shadow-sm">已保存至记录</span>}
+                                                                        </div>
+                                                                        <div className={`rounded-xl border p-4 text-sm leading-6 whitespace-pre-wrap shadow-sm ${workflowResult ? 'border-indigo-100 bg-indigo-50/30 text-indigo-900 font-medium' : 'border-gray-100 bg-slate-50 text-gray-500'}`}>
+                                                                            {workflowResult || (workflowLoading ? '正在等待后端返回本次分析结论...' : '触发 AI 分析后，这里会展示当前标注的复核结论。')}
+                                                                        </div>
+                                                                        {workflowMeta && (
+                                                                            <div className="mt-3 grid grid-cols-1 gap-3">
+                                                                                <div className="rounded-xl border border-gray-100 bg-white p-4">
+                                                                                    <div className="text-[11px] font-bold text-gray-500 mb-2">多智能体结构</div>
+                                                                                    <div className="flex flex-wrap gap-2 text-xs">
+                                                                                        <span className="px-2 py-1 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-100">{workflowMeta.workflowMode || 'real_multi_agent'}</span>
+                                                                                        {workflowMeta.agentModels?.audit_agent && <span className="px-2 py-1 rounded-full bg-purple-50 text-purple-700 border border-purple-100">审核分析: {workflowMeta.agentModels.audit_agent}</span>}
+                                                                                        {workflowMeta.agentModels?.decision_agent && <span className="px-2 py-1 rounded-full bg-amber-50 text-amber-700 border border-amber-100">审核决策: {workflowMeta.agentModels.decision_agent}</span>}
+                                                                                        {workflowMeta.agentModels?.guidance_agent && <span className="px-2 py-1 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-100">导盲摘要: {workflowMeta.agentModels.guidance_agent}</span>}
+                                                                                    </div>
+                                                                                </div>
+
+                                                                                <div className="rounded-xl border border-gray-100 bg-white p-4">
+                                                                                    <div className="text-[11px] font-bold text-gray-500 mb-2">审核决策摘要</div>
+                                                                                    <div className="grid grid-cols-2 gap-3 text-sm">
+                                                                                        <div>
+                                                                                            <div className="text-xs text-gray-400">匹配度</div>
+                                                                                            <div className="font-semibold text-gray-800">{workflowMeta.validation?.confidence_score != null ? `${Math.round(workflowMeta.validation.confidence_score)} 分` : '未提供'}</div>
+                                                                                        </div>
+                                                                                        <div>
+                                                                                            <div className="text-xs text-gray-400">最终决策</div>
+                                                                                            <div className="font-semibold text-gray-800">{workflowMeta.reviewDecision?.decision || 'unknown'}</div>
+                                                                                        </div>
+                                                                                    </div>
+                                                                                    <div className="mt-3 text-xs text-gray-500">图文校验：{workflowMeta.validation?.match_reason || '无'}</div>
+                                                                                    <div className="mt-2 text-xs text-gray-500">决策理由：{workflowMeta.reviewDecision?.reason || '无'}</div>
+                                                                                    {workflowMeta.reviewDecision?.archive_instruction && (
+                                                                                        <div className="mt-3 rounded-lg border border-emerald-100 bg-emerald-50 px-3 py-2 text-xs text-emerald-700">
+                                                                                            归档提示：{workflowMeta.reviewDecision.archive_instruction}
+                                                                                        </div>
+                                                                                    )}
+                                                                                </div>
+
+                                                                                {(workflowMeta.blindGuidanceSummary || workflowMeta.validation?.blind_guidance_summary) && (
+                                                                                    <div className="rounded-xl border border-emerald-100 bg-emerald-50/60 p-4">
+                                                                                        <div className="text-[11px] font-bold text-emerald-700 mb-2">导盲播报建议</div>
+                                                                                        <div className="text-sm leading-7 text-emerald-900 font-medium">
+                                                                                            {workflowMeta.blindGuidanceSummary || workflowMeta.validation?.blind_guidance_summary}
+                                                                                        </div>
+                                                                                    </div>
+                                                                                )}
+
+                                                                                {workflowMeta.rawDecisionText && (
+                                                                                    <div className="rounded-xl border border-gray-100 bg-white p-4">
+                                                                                        <div className="text-[11px] font-bold text-gray-500 mb-2">审核决策智能体原始输出</div>
+                                                                                        <div className="text-xs leading-6 whitespace-pre-wrap text-gray-700">{workflowMeta.rawDecisionText}</div>
+                                                                                    </div>
+                                                                                )}
+                                                                            </div>
+                                                                        )}
+                                                                    </div>
+                                                                    )}
+                                                                </div>
+                                                            </div>
+                                                        </>
+                                                    ) : (
+                                                        <div className="py-16 text-center text-gray-400">
+                                                            <i className="fas fa-folder-open text-4xl mb-4 block text-indigo-200"></i>
+                                                            请选择一条统一标注查看证据材料
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+
+                            {activeTab === 'users' && (
+                                <div className="card overflow-hidden shadow-sm">
+                                    <table className="w-full text-left text-sm">
+                                        <thead className="bg-gray-50 text-gray-500 uppercase text-xs tracking-wider border-b border-gray-100">
+                                            <tr>
+                                                <th className="p-4 font-semibold">User</th>
+                                                <th className="p-4 font-semibold">Status</th>
+                                                <th className="p-4 font-semibold">Joined</th>
+                                                <th className="p-4 text-right font-semibold">Actions</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-gray-100">
+                                            {users.length === 0 && (
+                                                <tr>
+                                                    <td colSpan="4" className="p-12 text-center text-gray-400">
+                                                        <i className="fas fa-users text-4xl mb-4 block text-gray-200"></i>
+                                                        <p className="text-sm font-medium">No users found</p>
+                                                    </td>
+                                                </tr>
+                                            )}
+                                            {users.map(u => (
+                                                <tr key={u.id} className="hover:bg-gray-50 transition-colors">
+                                                    <td className="p-4 flex items-center gap-3">
+                                                        {u.avatar ? <img src={u.avatar.startsWith('http') ? u.avatar : '/' + u.avatar} className="w-10 h-10 rounded-full object-cover shadow-sm border border-gray-100" onError={(e) => {e.target.style.display='none'; e.target.nextSibling.style.display='flex'}} /> : null}
+                                                        <div className="w-10 h-10 rounded-full bg-gradient-to-br from-gray-100 to-gray-200 border border-gray-200 flex items-center justify-center text-sm text-gray-500 font-bold shadow-sm" style={{display: u.avatar ? 'none' : 'flex'}}>{u.nickname?.[0]?.toUpperCase() || '?'}</div>
+                                                        <div>
+                                                            <div className="font-semibold text-gray-800">{u.nickname || 'Unknown User'}</div>
+                                                            <div className="text-xs text-gray-400 font-mono mt-0.5">{u.id}</div>
+                                                        </div>
+                                                    </td>
+                                                    <td className="p-4">
+                                                        <span className={`px-2.5 py-1 rounded-full text-xs font-bold shadow-sm border ${u.status === 'active' ? 'bg-green-50 text-green-600 border-green-200' : 'bg-red-50 text-red-600 border-red-200'}`}>
+                                                            {u.status === 'active' ? <><i className="fas fa-check-circle mr-1"></i>Active</> : <><i className="fas fa-ban mr-1"></i>Banned</>}
+                                                        </span>
+                                                    </td>
+                                                    <td className="p-4 text-gray-500 text-sm">{u.createdAt ? new Date(u.createdAt * 1000).toLocaleDateString() : 'N/A'}</td>
+                                                    <td className="p-4 text-right space-x-2">
+                                                        <button onClick={() => setEditUser(u)} className="text-blue-600 hover:bg-blue-100 bg-blue-50 p-2 rounded-lg transition-colors shadow-sm tooltip" title="Edit User"><i className="fas fa-edit"></i></button>
+                                                        {u.status === 'active' ? 
+                                                            <button onClick={() => handleUpdateUserStatus(u.id, 'banned')} className="text-orange-600 hover:bg-orange-100 bg-orange-50 p-2 rounded-lg transition-colors shadow-sm tooltip" title="Ban User"><i className="fas fa-ban"></i></button> :
+                                                            <button onClick={() => handleUpdateUserStatus(u.id, 'active')} className="text-green-600 hover:bg-green-100 bg-green-50 p-2 rounded-lg transition-colors shadow-sm tooltip" title="Unban User"><i className="fas fa-unlock"></i></button>
+                                                        }
+                                                        <button onClick={() => handleDeleteUser(u.id)} className="text-red-600 hover:bg-red-100 bg-red-50 p-2 rounded-lg transition-colors shadow-sm tooltip" title="Delete User"><i className="fas fa-trash"></i></button>
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            )}
+
+                            {activeTab === 'route_memory' && (
+                                <div className="space-y-6">
+                                    <div className="card overflow-hidden shadow-sm">
+                                        <div className="p-4 border-b border-gray-100 flex flex-col md:flex-row gap-4 md:justify-between md:items-center bg-gray-50">
+                                            <div>
+                                                <h3 className="font-semibold text-gray-700"><i className="fas fa-brain text-purple-500 mr-2"></i> AI 语义路线库</h3>
+                                                <div className="flex items-center gap-3 text-xs text-gray-500 mt-2">
+                                                    <span>设备数: {filteredRouteMemoryGroups.length} / {routeMemoryGroups.length}</span>
+                                                    <span>总地址数: {(filteredRouteMemoryGroups || []).reduce((sum, g) => sum + g.memories.length, 0)} / {routeMemories.length}</span>
+                                                </div>
+                                            </div>
+                                            <div className="relative w-full md:w-[360px]">
+                                                <i className="fas fa-search absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 text-sm"></i>
+                                                <input
+                                                    value={routeMemorySearchTerm}
+                                                    onChange={e => setRouteMemorySearchTerm(e.target.value)}
+                                                    placeholder="搜索设备名、设备标识、盲人账号或常用地址"
+                                                    className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-gray-200 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-purple-200 focus:border-purple-300"
+                                                />
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    {latestRouteMemoryEvent && (
+                                        <div className="card px-4 py-3 border border-emerald-200 bg-emerald-50 text-emerald-700 text-sm flex items-center justify-between">
+                                            <div>
+                                                <i className="fas fa-microphone-alt mr-2"></i>
+                                                刚通过语音保存常用地址：<span className="font-bold">{latestRouteMemoryEvent.alias}</span>
+                                            </div>
+                                            <button onClick={() => setViewRouteMemory(latestRouteMemoryEvent)} className="text-xs px-3 py-1 rounded-full bg-white border border-emerald-200 hover:bg-emerald-100 transition-colors">
+                                                查看详情
+                                            </button>
+                                        </div>
+                                    )}
+
+                                    {filteredRouteMemoryGroups.map(group => (
+                                        <div key={group.deviceKey} className={`card overflow-hidden shadow-sm border ${group.memories.some(mem => mem.id === highlightedRouteMemoryId) ? 'border-emerald-300 shadow-emerald-100' : 'border-gray-100'}`}>
+                                            <div className="px-5 py-4 border-b border-gray-100 bg-gradient-to-r from-purple-50 to-white flex items-center justify-between">
+                                                <div>
+                                                    <div className="text-sm font-bold text-gray-800 flex items-center gap-2">
+                                                        <i className="fas fa-walking text-purple-500"></i>
+                                                        {group.deviceLabel}
+                                                    </div>
+                                                    <div className="text-xs text-gray-500 mt-1">
+                                                        设备标识: <span className="font-mono">{group.deviceKey}</span>
+                                                    </div>
+                                                </div>
+                                                <div className="px-3 py-1 rounded-full bg-purple-100 text-purple-700 text-xs font-bold">
+                                                    常用地址 {group.memories.length}
+                                                </div>
+                                            </div>
+
+                                            <div className="divide-y divide-gray-100">
+                                                {group.memories.map(rm => (
+                                                    <div id={`route-memory-${rm.id}`} key={rm.id} className={`px-5 py-4 flex items-center justify-between gap-4 transition-colors ${highlightedRouteMemoryId === rm.id ? 'bg-emerald-50 ring-1 ring-emerald-200' : 'hover:bg-gray-50'}`}>
+                                                        <div className="min-w-0 flex-1">
+                                                            <div className="flex items-center gap-2 flex-wrap">
+                                                                <button onClick={() => setViewRouteMemory(rm)} className="px-3 py-1 bg-purple-100 text-purple-700 rounded-full text-xs font-bold border border-purple-200 hover:bg-purple-200 transition-colors">
+                                                                    <i className="fas fa-tag mr-1"></i> {rm.alias}
+                                                                </button>
+                                                                {highlightedRouteMemoryId === rm.id && (
+                                                                    <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 text-[10px] font-bold border border-emerald-200">刚保存</span>
+                                                                )}
+                                                                <span className="text-[11px] text-gray-400 font-mono">{rm.lat?.toFixed(5)}, {rm.lng?.toFixed(5)}</span>
+                                                            </div>
+                                                            <div className="text-xs text-gray-400 mt-2">
+                                                                创建时间: {new Date(rm.created_at * 1000).toLocaleString()}
+                                                            </div>
+                                                        </div>
+                                                        <div className="shrink-0">
+                                                            <button onClick={() => setViewRouteMemory(rm)} className="text-blue-500 hover:bg-blue-50 p-2 rounded transition-colors mr-2"><i className="fas fa-eye"></i></button>
+                                                            <button onClick={async () => {
+                                                                if (confirm('Delete this semantic memory?')) {
+                                                                    const res = ensureAdminResponse(await fetch('/api/admin/route_memories/' + rm.id, { method: 'DELETE', credentials: 'include' }));
+                                                                    if (res.ok) setRouteMemories(prev => prev.filter(m => m.id !== rm.id));
+                                                                }
+                                                            }} className="text-red-500 hover:bg-red-50 p-2 rounded transition-colors"><i className="fas fa-trash"></i></button>
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    ))}
+
+                                    {filteredRouteMemoryGroups.length === 0 && (
+                                        <div className="card p-10 text-center text-gray-400">
+                                            <i className="fas fa-inbox text-3xl mb-3 block opacity-20"></i>
+                                            {routeMemorySearchTerm ? '未找到匹配的设备或常用地址' : '暂无 AI 语义路线记忆数据'}
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+
+                            {activeTab === 'disputes' && (
+                                <div className="space-y-6">
+                                    <div className="card p-4 flex flex-col md:flex-row gap-4 md:items-center md:justify-between">
+                                        <div>
+                                            <div className="text-sm font-bold text-gray-800">障碍物争议筛选</div>
+                                            <div className="text-xs text-gray-500 mt-1">按地区查看障碍物位置、状态与上报冲突。</div>
+                                        </div>
+                                        <select
+                                            className="bg-gray-50 border border-gray-200 rounded-xl px-4 py-2 text-sm w-full md:w-auto"
+                                            value={selectedDisputeRegion}
+                                            onChange={e => setSelectedDisputeRegion(e.target.value)}
+                                        >
+                                            <option value="">全部地区</option>
+                                            {disputeRegions.map(region => (
+                                                <option key={region.key} value={region.key}>{region.name}</option>
+                                            ))}
+                                        </select>
+                                    </div>
+
+                                    <div className="grid grid-cols-1 gap-6">
+                                        {disputes.length === 0 && (
+                                            <div className="col-span-full py-20 flex flex-col items-center justify-center bg-white rounded-2xl border border-dashed border-gray-300">
+                                                <i className="fas fa-gavel text-yellow-200 text-6xl mb-4"></i>
+                                                <p className="text-gray-500 font-medium">当前地区暂无待处理的障碍物争议</p>
+                                            </div>
+                                        )}
+                                        {disputes.map(d => (
+                                            <div key={d.id} className="card bg-white p-6 hover:shadow-xl hover:-translate-y-1 transition-all duration-300 group border border-gray-100 rounded-2xl relative overflow-hidden border-l-4 border-l-yellow-500">
+                                                <div className="absolute top-0 right-0 w-24 h-24 bg-gradient-to-br from-yellow-50 to-orange-50 rounded-bl-full -z-10"></div>
+                                                <div className="flex justify-between items-center mb-6 z-10 relative border-b border-gray-100 pb-4">
+                                                    <div className="flex items-center gap-3">
+                                                        <div className="w-10 h-10 rounded-full bg-yellow-100 flex items-center justify-center text-yellow-600">
+                                                            <i className="fas fa-balance-scale"></i>
+                                                        </div>
+                                                        <div>
+                                                            <h3 className="font-bold text-gray-800">障碍物争议 #{d.id.substring(0,8)}</h3>
+                                                            <span className="text-xs text-gray-500 font-mono">区域：{d.regionName || '默认地区'} · 目标：{d.dataA?.title || d.target_id || '未知障碍物'}</span>
+                                                        </div>
+                                                    </div>
+                                                    <span className="text-xs font-semibold bg-gray-100 text-gray-600 px-3 py-1 rounded-full">
+                                                        <i className="far fa-clock mr-1"></i> {new Date(d.created_at * 1000).toLocaleString()}
+                                                    </span>
+                                                </div>
+
+                                                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
+                                                    <div className="bg-gray-50 rounded-xl border border-gray-100 p-4">
+                                                        <div className="text-xs font-bold text-gray-400 uppercase mb-2">现有障碍物</div>
+                                                        <div className="font-semibold text-gray-800">{d.dataA?.title || '无标题障碍物'}</div>
+                                                        <div className="text-sm text-gray-500 mt-1">{d.dataA?.description || '暂无描述'}</div>
+                                                    </div>
+                                                    <div className="bg-gray-50 rounded-xl border border-gray-100 p-4">
+                                                        <div className="text-xs font-bold text-gray-400 uppercase mb-2">新上报信息</div>
+                                                        <div className="font-semibold text-gray-800">{d.dataB?.markerTitle || d.dataB?.title || '无标题上报'}</div>
+                                                        <div className="text-sm text-gray-500 mt-1">{d.dataB?.content || d.dataB?.description || '暂无描述'}</div>
+                                                    </div>
+                                                </div>
+
+                                                <div className="bg-orange-50/50 p-4 rounded-xl border border-orange-100 mb-6">
+                                                    <p className="text-xs text-orange-500 font-bold uppercase tracking-wider mb-1">障碍物争议原因</p>
+                                                    <p className="text-gray-800 font-medium text-sm">"{d.reason}"</p>
+                                                    <p className="text-xs text-gray-400 mt-2 font-mono">Reporter: {d.reporter}</p>
+                                                </div>
+
+                                                <div className="flex justify-end gap-3 mt-4 pt-4 border-t border-gray-50">
+                                                    <button onClick={async () => {
+                                                        const res = ensureAdminResponse(await fetch('/api/admin/disputes/' + d.id + '/resolve', { method: 'POST', credentials: 'include', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({action: 'approve'}) }));
+                                                        if(res.ok) setDisputes(prev => prev.filter(x => x.id !== d.id));
+                                                    }} className="px-5 py-2 bg-green-50 hover:bg-green-600 text-green-600 hover:text-white rounded-lg text-sm font-bold transition-all shadow-sm">同意处理</button>
+                                                    <button onClick={async () => {
+                                                        const res = ensureAdminResponse(await fetch('/api/admin/disputes/' + d.id + '/resolve', { method: 'POST', credentials: 'include', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({action: 'reject'}) }));
+                                                        if(res.ok) setDisputes(prev => prev.filter(x => x.id !== d.id));
+                                                    }} className="px-5 py-2 bg-red-50 hover:bg-red-600 text-red-600 hover:text-white rounded-lg text-sm font-bold transition-all shadow-sm">驳回争议</button>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+
+                        </div>
+                    </main>
+
+                    {/* Modals (Updated for Light Theme) */}
+                    {showDeviceModal && (
+                        <div className="fixed inset-0 bg-gray-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-8 transition-opacity duration-300">
+                            <div className="bg-[#f8f9fa] w-full max-w-6xl h-[85vh] rounded-3xl shadow-2xl overflow-hidden flex flex-col animate-fadeIn relative">
+                                {/* Header */}
+                                <div className="bg-white px-8 py-6 border-b border-gray-100 flex justify-between items-center shrink-0">
+                                    <div>
+                                        <h2 className="text-2xl font-bold text-gray-800 tracking-tight">Device Center</h2>
+                                        <p className="text-sm text-gray-500 mt-1">Select a device to monitor remotely</p>
+                                    </div>
+                                    <div className="flex gap-4 items-center">
+                                        <div className="relative group">
+                                            <i className="fas fa-search absolute left-4 top-3.5 text-gray-400 group-focus-within:text-blue-500 transition-colors"></i>
+                                            <input 
+                                                type="text" 
+                                                placeholder="Search by ID, Name or Location..." 
+                                                className="pl-10 pr-4 py-3 bg-gray-50 border border-transparent rounded-xl text-sm w-80 focus:bg-white focus:border-blue-100 focus:ring-4 focus:ring-blue-50 outline-none transition-all shadow-sm"
+                                                value={searchTerm}
+                                                onChange={e => setSearchTerm(e.target.value)}
+                                                autoFocus
+                                            />
+                                        </div>
+                                        <button onClick={() => setShowDeviceModal(false)} className="w-10 h-10 rounded-full bg-gray-100 hover:bg-gray-200 text-gray-500 hover:text-gray-700 flex items-center justify-center transition-colors">
+                                            <i className="fas fa-times text-lg"></i>
+                                        </button>
+                                    </div>
+                                </div>
+                                
+                                {/* Stats Bar */}
+                                <div className="bg-white/50 px-8 py-4 border-b border-gray-100 flex gap-8 overflow-x-auto shrink-0">
+                                    <div className="flex items-center gap-3">
+                                        <div className="w-10 h-10 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center"><i className="fas fa-server"></i></div>
+                                        <div>
+                                            <div className="text-xs text-gray-400 font-bold uppercase">Total Devices</div>
+                                            <div className="text-lg font-bold text-gray-800">{devices.length}</div>
+                                        </div>
+                                    </div>
+                                    <div className="w-px h-10 bg-gray-200"></div>
+                                    <div className="flex items-center gap-3">
+                                        <div className="w-10 h-10 rounded-2xl bg-green-50 text-green-600 flex items-center justify-center"><i className="fas fa-signal"></i></div>
+                                        <div>
+                                            <div className="text-xs text-gray-400 font-bold uppercase">Online</div>
+                                            <div className="text-lg font-bold text-green-600">{devices.filter(d => d.status === 'online').length}</div>
+                                        </div>
+                                    </div>
+                                    <div className="w-px h-10 bg-gray-200"></div>
+                                    <div className="flex items-center gap-3">
+                                        <div className="w-10 h-10 rounded-2xl bg-red-50 text-red-600 flex items-center justify-center"><i className="fas fa-battery-quarter"></i></div>
+                                        <div>
+                                            <div className="text-xs text-gray-400 font-bold uppercase">Low Battery</div>
+                                            <div className="text-lg font-bold text-red-600">{devices.filter(d => d.battery < 20).length}</div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {/* Content Grid */}
+                                <div className="flex-1 overflow-y-auto p-8 bg-gray-50/50">
+                                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 pb-20">
+                                        {devices.filter(d => d.name.toLowerCase().includes(searchTerm.toLowerCase()) || d.id.includes(searchTerm) || d.location?.toLowerCase().includes(searchTerm.toLowerCase())).map(dev => (
+                                            <div key={dev.id} 
+                                                 onClick={() => { setActiveDeviceId(dev.id); setShowDeviceModal(false); }}
+                                                 className={`bg-white rounded-2xl border transition-all cursor-pointer hover:shadow-xl hover:-translate-y-1 group relative overflow-hidden flex flex-col ${activeDeviceId === dev.id ? 'border-blue-500 ring-4 ring-blue-50 shadow-lg' : 'border-gray-100 hover:border-blue-200'}`}
+                                            >
+                                                {/* Top Image Area */}
+                                                <div className={`h-24 w-full relative ${dev.status === 'online' ? 'bg-gradient-to-r from-blue-500 to-indigo-600' : 'bg-gray-200'}`}>
+                                                    <div className="absolute top-3 right-3 bg-white/20 backdrop-blur px-2 py-1 rounded text-xs text-white font-medium border border-white/30">
+                                                        {dev.status === 'online' ? '● Online' : '○ Offline'}
+                                                    </div>
+                                                </div>
+                                                
+                                                {/* Avatar (Floating) */}
+                                                <div className="absolute top-12 left-6">
+                                                    <div className={`w-20 h-20 rounded-2xl border-4 border-white shadow-md flex items-center justify-center text-3xl ${dev.status === 'online' ? 'bg-white text-blue-600' : 'bg-gray-100 text-gray-400'}`}>
+                                                        <i className="fas fa-robot"></i>
+                                                    </div>
+                                                </div>
+
+                                                {/* Content */}
+                                                <div className="pt-12 px-6 pb-6 flex-1 flex flex-col">
+                                                    <div className="mb-4">
+                                                        <h3 className="font-bold text-lg text-gray-800 truncate" title={dev.name}>{dev.name}</h3>
+                                                        <p className="text-xs text-gray-400 font-mono flex items-center gap-1">
+                                                            <i className="fas fa-fingerprint"></i> {dev.id}
+                                                        </p>
+                                                    </div>
+                                                    
+                                                    <div className="space-y-3 mt-auto">
+                                                        <div className="flex items-center gap-2 text-sm text-gray-600">
+                                                            <i className="fas fa-map-marker-alt w-5 text-center text-gray-400"></i>
+                                                            <span className="truncate">{dev.location || 'Unknown'}</span>
+                                                        </div>
+                                                        <div className="flex items-center gap-2 text-sm text-gray-600">
+                                                            <i className={`fas fa-battery-${dev.battery > 80 ? 'full' : dev.battery > 50 ? 'three-quarters' : dev.battery > 20 ? 'half' : 'quarter'} w-5 text-center ${dev.battery < 20 ? 'text-red-500' : 'text-gray-400'}`}></i>
+                                                            <span>{dev.battery}% Battery</span>
+                                                        </div>
+                                                        <div className="flex items-center gap-2 text-sm text-gray-600">
+                                                            <i className="fas fa-wifi w-5 text-center text-gray-400"></i>
+                                                            <span>{dev.signal}% Signal</span>
+                                                        </div>
+                                                    </div>
+
+                                                    <div className="mt-6 pt-4 border-t border-gray-50 flex justify-between items-center">
+                                                        <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">Action</span>
+                                                        <button className={`px-4 py-2 rounded-lg text-xs font-bold transition-colors ${dev.status === 'online' ? 'bg-blue-50 text-blue-600 hover:bg-blue-100' : 'bg-gray-100 text-gray-400 cursor-not-allowed'}`}>
+                                                            {dev.status === 'online' ? 'Connect' : 'Unavailable'}
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {(editObstacle || editShop || editContribution || editUser) && (
+                        <div className="fixed inset-0 bg-gray-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                            <div className="bg-white p-6 rounded-2xl w-full max-w-lg shadow-2xl relative">
+                                <button onClick={() => { setEditObstacle(null); setEditShop(null); setEditContribution(null); setEditUser(null); }} 
+                                        className="absolute top-4 right-4 text-gray-400 hover:text-gray-600">
+                                    <i className="fas fa-times"></i>
+                                </button>
+                                
+                                <h2 className="text-xl font-bold text-gray-800 mb-4">Edit Item</h2>
+                                
+                                {editUser && (
+                                    <div className="space-y-4">
+                                        {/* Avatar Upload */}
+                                        <div className="flex justify-center mb-6">
+                                            <div className="relative group w-24 h-24">
+                                                <img 
+                                                    src={editUser.avatar ? (editUser.avatar.startsWith('http') ? editUser.avatar : '/' + editUser.avatar) : 'https://via.placeholder.com/150'} 
+                                                    className="w-full h-full rounded-full object-cover border-4 border-gray-100 shadow-md"
+                                                    onError={(e) => {e.target.src='https://via.placeholder.com/150?text=No+Img'}}
+                                                />
+                                                <label className="absolute inset-0 flex items-center justify-center bg-black/50 text-white opacity-0 group-hover:opacity-100 rounded-full cursor-pointer transition-opacity duration-200">
+                                                    <i className="fas fa-camera text-xl"></i>
+                                                    <input type="file" className="hidden" accept="image/*" onChange={handleAvatarUpload} />
+                                                </label>
+                                            </div>
+                                        </div>
+
+                                        <form onSubmit={handleUpdateUser} className="space-y-4">
+                                            <input className="w-full bg-gray-50 border border-gray-200 p-3 rounded-lg text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500" value={editUser.nickname} onChange={e => setEditUser({...editUser, nickname: e.target.value})} placeholder="Nickname" />
+                                            <input className="w-full bg-gray-50 border border-gray-200 p-3 rounded-lg text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500" value={editUser.password || ''} onChange={e => setEditUser({...editUser, password: e.target.value})} placeholder="New Password (Leave empty to keep)" />
+                                            <button className="w-full bg-blue-600 hover:bg-blue-700 py-3 rounded-lg text-white font-bold transition-colors shadow-lg shadow-blue-500/30">Save Changes</button>
+                                        </form>
+                                    </div>
+                                )}
+                                    
+                                {editObstacle && (
+                                    <form onSubmit={handleUpdateObstacle} className="space-y-4">
+                                        <div className="flex items-center gap-4 mb-4 overflow-x-auto pb-2">
+                                            {(editObstacle.imageUrls || []).map((url, i) => (
+                                                <img key={i} src={url} className="w-20 h-20 object-cover rounded-lg border border-gray-200 shadow-sm" />
+                                            ))}
+                                            <label className="w-20 h-20 flex flex-col items-center justify-center bg-gray-50 border-2 border-dashed border-gray-300 rounded-lg text-gray-400 cursor-pointer hover:bg-gray-100 hover:border-blue-400 hover:text-blue-500 transition-colors shrink-0">
+                                                <i className="fas fa-plus text-xl mb-1"></i>
+                                                <span className="text-[10px] font-medium">Add Photo</span>
+                                                <input type="file" className="hidden" accept="image/*" onChange={e => handleImageUpload(e, editObstacle, 'obstacles')} />
+                                            </label>
+                                        </div>
+                                        <input className="w-full bg-gray-50 border border-gray-200 p-3 rounded-lg text-gray-800" value={editObstacle.title || ''} onChange={e => setEditObstacle({...editObstacle, title: e.target.value})} placeholder="Obstacle Title" />
+                                        <textarea className="w-full bg-gray-50 border border-gray-200 p-3 rounded-lg text-gray-800" value={editObstacle.description || ''} onChange={e => setEditObstacle({...editObstacle, description: e.target.value})} placeholder="Description" rows="3" />
+                                        <select
+                                            value={editObstacle.status}
+                                            onChange={e => setEditObstacle({...editObstacle, status: parseInt(e.target.value)})}
+                                            className="w-full p-4 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 bg-gray-50 focus:bg-white transition-all text-sm outline-none"
+                                        >
+                                            <option value="1">1 - 已通过 (Active)</option>
+                                            <option value="0">0 - 待处理 (Pending)</option>
+                                            <option value="2">2 - 已驳回/隐藏 (Removed)</option>
+                                        </select>
+                                        <button className="w-full bg-blue-600 hover:bg-blue-700 py-3 rounded-lg text-white font-bold transition-colors shadow-lg shadow-blue-500/30">Save Changes</button>
+                                    </form>
+                                )}
+
+                                {editShop && (
+                                    <form onSubmit={handleUpdateShop} className="space-y-4">
+                                        <div className="flex items-center gap-4 mb-4 overflow-x-auto pb-2">
+                                            {(editShop.imageUrls || []).map((url, i) => (
+                                                <img key={i} src={url} className="w-20 h-20 object-cover rounded-lg border border-gray-200 shadow-sm" />
+                                            ))}
+                                            <label className="w-20 h-20 flex flex-col items-center justify-center bg-gray-50 border-2 border-dashed border-gray-300 rounded-lg text-gray-400 cursor-pointer hover:bg-gray-100 hover:border-blue-400 hover:text-blue-500 transition-colors shrink-0">
+                                                <i className="fas fa-plus text-xl mb-1"></i>
+                                                <span className="text-[10px] font-medium">Add Photo</span>
+                                                <input type="file" className="hidden" accept="image/*" onChange={e => handleImageUpload(e, editShop, 'shops')} />
+                                            </label>
+                                        </div>
+                                        <input className="w-full bg-gray-50 border border-gray-200 p-3 rounded-lg text-gray-800" value={editShop.title || ''} onChange={e => setEditShop({...editShop, title: e.target.value})} placeholder="Shop Title" />
+                                        <textarea className="w-full bg-gray-50 border border-gray-200 p-3 rounded-lg text-gray-800" value={editShop.description || ''} onChange={e => setEditShop({...editShop, description: e.target.value})} placeholder="Description" rows="3" />
+                                        <select
+                                            value={editShop.status}
+                                            onChange={e => setEditShop({...editShop, status: parseInt(e.target.value)})}
+                                            className="w-full p-4 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 bg-gray-50 focus:bg-white transition-all text-sm outline-none"
+                                        >
+                                            <option value="1">1 - 已通过 (Active)</option>
+                                            <option value="0">0 - 待处理 (Pending)</option>
+                                            <option value="2">2 - 已驳回/隐藏 (Removed)</option>
+                                        </select>
+                                        <button className="w-full bg-blue-600 hover:bg-blue-700 py-3 rounded-lg text-white font-bold transition-colors shadow-lg shadow-blue-500/30">Save Changes</button>
+                                    </form>
+                                )}
+                            </div>
+                        </div>
+                    )}
+
+                    {/* View Route Memory Modal */}
+                    {viewRouteMemory && (
+                        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center">
+                            <div className="bg-white rounded-2xl w-full max-w-lg overflow-hidden shadow-2xl flex flex-col">
+                                {/* Header */}
+                                <div className="px-6 py-4 border-b border-gray-100 flex justify-between items-center bg-gray-50">
+                                    <div className="flex items-center gap-3">
+                                        <div className="w-10 h-10 rounded-full bg-purple-100 flex items-center justify-center text-purple-600">
+                                            <i className="fas fa-brain"></i>
+                                        </div>
+                                        <div>
+                                            <h3 className="font-bold text-gray-800">AI 路线记忆详情</h3>
+                                            <p className="text-xs text-gray-500 font-mono">ID: {viewRouteMemory.id}</p>
+                                        </div>
+                                    </div>
+                                    <button onClick={() => setViewRouteMemory(null)} className="w-8 h-8 flex items-center justify-center rounded-full text-gray-400 hover:text-gray-600 hover:bg-gray-200 transition-colors">
+                                        <i className="fas fa-times"></i>
+                                    </button>
+                                </div>
+                                
+                                {/* Content */}
+                                <div className="p-6 space-y-5">
+                                    {/* Info Grid */}
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <div className="bg-gray-50 p-4 rounded-xl border border-gray-100">
+                                            <p className="text-xs text-gray-500 uppercase tracking-wider font-semibold mb-1">所属设备 / 盲人账号</p>
+                                            <p className="font-medium text-gray-800 break-all">{viewRouteMemory.device_label || viewRouteMemory.device_key || viewRouteMemory.user_id}</p>
+                                        </div>
+                                        <div className="bg-purple-50 p-4 rounded-xl border border-purple-100">
+                                            <p className="text-xs text-purple-500 uppercase tracking-wider font-semibold mb-1">AI 语义别称</p>
+                                            <p className="font-bold text-purple-700 text-lg flex items-center gap-2">
+                                                <i className="fas fa-tag text-purple-400"></i> {viewRouteMemory.alias}
+                                            </p>
+                                        </div>
+                                    </div>
+
+                                    {/* Coordinates & Map Preview */}
+                                    <div className="border border-gray-200 rounded-xl overflow-hidden flex flex-col">
+                                        <div className="bg-gray-50 px-4 py-3 flex justify-between items-center border-b border-gray-200">
+                                            <span className="text-sm font-semibold text-gray-700"><i className="fas fa-map-marker-alt text-red-500 mr-2"></i>地理坐标位置</span>
+                                            <span className="text-xs font-mono bg-white px-2 py-1 rounded border border-gray-200 text-gray-600">
+                                                {viewRouteMemory.lat?.toFixed(5)}, {viewRouteMemory.lng?.toFixed(5)}
+                                            </span>
+                                        </div>
+                                        <div className="h-64 relative bg-gray-100">
+                                            <RouteMemoryMap lat={viewRouteMemory.lat} lng={viewRouteMemory.lng} alias={viewRouteMemory.alias} />
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                {/* Footer */}
+                                <div className="px-6 py-4 border-t border-gray-100 bg-gray-50 flex justify-between items-center">
+                                    <div className="text-xs text-gray-400">
+                                        <i className="far fa-clock mr-1"></i>
+                                        创建于: {new Date(viewRouteMemory.created_at * 1000).toLocaleString()}
+                                    </div>
+                                    <button onClick={() => setViewRouteMemory(null)} className="px-5 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors shadow-sm font-medium">
+                                        关闭
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>

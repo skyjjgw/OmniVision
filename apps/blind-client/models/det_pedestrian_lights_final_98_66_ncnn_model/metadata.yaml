@@ -1,0 +1,19 @@
+description: Ultralytics det_pedestrian_lights_final_98_66 model trained on /root/autodl-tmp/pedestrian-lights.v1i.yolov8/data.yaml
+author: Ultralytics
+date: '2026-03-29T00:38:54.280475'
+version: 8.3.235
+license: AGPL-3.0 License (https://ultralytics.com/license)
+docs: https://docs.ultralytics.com
+stride: 32
+task: detect
+batch: 1
+imgsz:
+- 480
+- 480
+names:
+  0: green_pedestrian_light
+  1: red_pedestrian_light
+args:
+  batch: 1
+  half: true
+channels: 3
