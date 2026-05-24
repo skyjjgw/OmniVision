@@ -77,7 +77,6 @@ OmniVision/
   <img src="docs/images/mobile-03.png" alt="Volunteer App Community" width="31%" />
 </p>
 
-<<<<<<< HEAD
 <p align="center">
   <img src="docs/images/mobile-call-showcase.png" alt="Volunteer App Video Call" width="72%" />
 </p>
