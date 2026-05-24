@@ -80,7 +80,7 @@ OmniVision/
 <p align="center">
   <img src="docs/images/mobile-call-showcase.png" alt="Volunteer App Video Call" width="72%" />
 </p>
-<<<<<<< HEAD
+
 
 =======
 - `mobile-01`：地图与任务主界面
