@@ -84,7 +84,6 @@ OmniVision/
 =======
 移动端示例界面 2：地图标注协同场景  
 ![Volunteer App - Call](docs/images/mobile-02.png)
->>>>>>> 3925c6c02d729eca310a51ca2b4fedfb08b7c7d0
 
 - `mobile-01`：地图与任务主界面
 - `mobile-02`：接单与协作流程界面
